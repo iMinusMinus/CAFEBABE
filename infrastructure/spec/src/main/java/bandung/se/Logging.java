@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.lang.management.ManagementFactory;
 import java.util.Date;
 import java.util.Formattable;
 import java.util.FormattableFlags;
@@ -140,16 +139,6 @@ public class Logging extends LogManager {
 
         private String format;
 
-        private static String pid;
-
-        static {
-            try {
-                pid = ManagementFactory.getRuntimeMXBean().getName().split("@")[0];
-            } catch (Throwable t) {
-                pid = "-";
-            }
-        }
-
         private final Date dat = new Date();
 
         public ClassicFormatter() {
@@ -178,8 +167,8 @@ public class Logging extends LogManager {
             String message = formatMessage(record);
             dat.setTime(record.getMillis());
             Object level = format.contains("\u001b[") ? new ColoredLevel(record.getLevel()) : record.getLevel().getName();
-            int lineNumber = 0; // 无法从LogRecord获取源代码行数，获取源代码行数会降低性能
-            int tid = record.getThreadID(); // XXX 非线程名，不好对应dump的线程
+            String lineNumber = "na"; // 无法从LogRecord获取源代码行数(inferCaller时未设置lineNUmber)，获取源代码行数会降低性能
+            int tid = record.getThreadID(); // XXX 非线程名，不好对应dump的线程；JDK 16 开始可以取 record.getLongThreadID()
             String throwable = "";
             if (record.getThrown() != null) {
                 StringWriter sw = new StringWriter();
@@ -190,7 +179,7 @@ public class Logging extends LogManager {
                 throwable = sw.toString();
             }
             return String.format(format, dat, record.getSourceClassName(), record.getLoggerName(), level, message, throwable,
-                    pid, tid, record.getSourceMethodName(), lineNumber, traceId, spanId);
+                    JvmIntrospector.PID, tid, record.getSourceMethodName(), lineNumber, traceId, spanId);
         }
     }
 
