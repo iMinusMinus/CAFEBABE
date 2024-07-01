@@ -11,12 +11,12 @@ import java.util.Map;
 
 public abstract class DefaultParts {
 
-    public static Part formPart(String name, Map<String, List<String>> headers, InputStream is, File tmp) {
-        return new FormPart(name, headers, is, tmp);
+    public static Part formPart(String name, Map<String, List<String>> headers, InputStream is) {
+        return new FormPart(name, headers, is);
     }
 
-    public static Part filePart(String name, String filename, Map<String, List<String>> headers, InputStream is, File file) {
-        return new FilePart(name, filename, headers, is, file);
+    public static Part filePart(String name, String filename, Map<String, List<String>> headers, InputStream is, File tmp) {
+        return new FilePart(name, filename, headers, is, tmp);
     }
 
     static abstract class AbstractPart implements Part {
@@ -27,22 +27,24 @@ public abstract class DefaultParts {
 
         protected final InputStream is;
 
-        protected final File tmp;
-
         protected AbstractPart(String name, InputStream is) {
-            this(name, Collections.emptyMap(), is, null);
+            this(name, Collections.emptyMap(), is);
         }
 
-        protected AbstractPart(String name, Map<String, List<String>> headers, InputStream is, File tmp) {
+        protected AbstractPart(String name, Map<String, List<String>> headers, InputStream is) {
             this.name = name;
             this.headers = headers;
             this.is = is;
-            this.tmp = tmp;
         }
 
         @Override
         public InputStream getInputStream() throws IOException {
             return is;
+        }
+
+        @Override
+        public String getContentType() {
+            return getHeader("Content-Type");
         }
 
         public String getName() {
@@ -59,19 +61,14 @@ public abstract class DefaultParts {
         }
 
         @Override
-        public void write(String fileName) throws IOException {
-
-        }
-
-        @Override
-        public void delete() throws IOException {
-            tmp.delete();
-        }
-
-        @Override
         public String getHeader(String name) {
-            List<String> list = headers.get(name.toLowerCase());
-            return list != null && !list.isEmpty() ? list.get(0) : null;
+            for (String h : headers.keySet()) {
+                if (h.equalsIgnoreCase(name)) {
+                    List<String> values = headers.get(h);
+                    return values != null && !values.isEmpty() ? values.get(0) : null;
+                }
+            }
+            return null;
         }
 
         @Override
@@ -91,13 +88,8 @@ public abstract class DefaultParts {
             super(name, is);
         }
 
-        public FormPart(String name, Map<String, List<String>> headers, InputStream is, File file) {
-            super(name, headers, is, file);
-        }
-
-        @Override
-        public String getContentType() {
-            return "application/x-www-form-urlencoded";
+        public FormPart(String name, Map<String, List<String>> headers, InputStream is) {
+            super(name, headers, is);
         }
 
         @Override
@@ -105,6 +97,13 @@ public abstract class DefaultParts {
             return null;
         }
 
+        @Override
+        public void write(String fileName) throws IOException {
+        }
+
+        @Override
+        public void delete() throws IOException {
+        }
 
     }
 
@@ -112,19 +111,28 @@ public abstract class DefaultParts {
 
         private final String filename;
 
-        private FilePart(String name, String filename, Map<String, List<String>> headers, InputStream is, File tmp) {
-            super(name, headers, is, tmp);
-            this.filename = filename;
-        }
+        private File tmp;
 
-        @Override
-        public String getContentType() {
-            return "multipart/form-data";
+        private FilePart(String name, String filename, Map<String, List<String>> headers, InputStream is, File tmp) {
+            super(name, headers, is);
+            this.filename = filename;
+            this.tmp = tmp;
         }
 
         @Override
         public String getSubmittedFileName() {
             return filename;
+        }
+
+        @Override
+        public void write(String fileName) throws IOException {
+        }
+
+        @Override
+        public void delete() throws IOException {
+            if (tmp != null) {
+                tmp.delete();
+            }
         }
 
     }

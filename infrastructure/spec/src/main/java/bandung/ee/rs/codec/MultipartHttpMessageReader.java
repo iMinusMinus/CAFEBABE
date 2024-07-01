@@ -12,7 +12,6 @@ import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.ext.MessageBodyReader;
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -65,6 +64,13 @@ public class MultipartHttpMessageReader extends AbstractMessageBodyConverter imp
                     'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', // ALPHA
                     '\'', '(', ')', '+', '_', ',', '-', '.', '/', ':', '=', '?', ' '};
 
+    private static final int MAX_BOUNDARY_LENGTH = 70;
+
+    /**
+     * <a href="https://datatracker.ietf.org/doc/html/rfc2822#section-2.1.1">Line Length Limits</a>
+     */
+    private static final int LINE_LENGTH_LIMIT = 998;
+
     public MultipartHttpMessageReader() {
         this(8192/* nginx client_body_buffer_size */, System.getProperty("java.io.tmpdir"), 1024 * 1024/* nginx client_max_body_size 1m */);
     }
@@ -82,6 +88,9 @@ public class MultipartHttpMessageReader extends AbstractMessageBodyConverter imp
      */
     public MultipartHttpMessageReader(Charset charset, int bufferSize, int fileSizeThreshold, String location, int maxFileSize) {
         super(charset, bufferSize, MediaType.MULTIPART_FORM_DATA_TYPE);
+        if (bufferSize < 2 * LINE_LENGTH_LIMIT && -bufferSize < 2 * LINE_LENGTH_LIMIT) { // make sure dash-boundary/delimiter, header name in one buffer
+            throw new IllegalArgumentException("buffer size too small");
+        }
         assert fileSizeThreshold <= maxFileSize;
         this.fileSizeThreshold = fileSizeThreshold;
         this.location = location;
@@ -94,11 +103,8 @@ public class MultipartHttpMessageReader extends AbstractMessageBodyConverter imp
         return super.accept(mediaType);
     }
 
-    @Override
-    public MultivaluedMap<String, Part> readFrom(Class<MultivaluedMap<String, Part>> type, Type genericType, Annotation[] annotations,
-                                                 MediaType mediaType, MultivaluedMap<String, String> httpHeaders,
-                                                 InputStream entityStream) throws IOException, WebApplicationException {
-        // https://www.rfc-editor.org/rfc/rfc2046
+    // https://www.rfc-editor.org/rfc/rfc2046
+    protected byte[] extractBoundaryParam(MediaType mediaType) throws WebApplicationException {
         String boundaryParameter = mediaType.getParameters().get("boundary");
         if (boundaryParameter == null || boundaryParameter.length() < 1) {
             throw new WebApplicationException("Content-Type 'multipart/form-data' require parameter 'boundary'", Response.Status.BAD_REQUEST);
@@ -109,115 +115,142 @@ public class MultipartHttpMessageReader extends AbstractMessageBodyConverter imp
         boundaryParameter = boundaryParameter.startsWith("\"") && boundaryParameter.endsWith("\"") ?
                 boundaryParameter.substring(1, boundaryParameter.length() - 1) : // eg, "boundary=\" text-has-space\""
                 boundaryParameter;
-        byte[] boundary = boundaryParameter.getBytes(StandardCharsets.UTF_8);
+        byte[] boundary = boundaryParameter.getBytes(StandardCharsets.US_ASCII);
         check(boundary);
+        return boundary;
+    }
+
+    private byte[] merge(byte[]... old) {
+        int len = 0;
+        for (byte[] a : old) {
+            len += a.length;
+        }
+        byte[] data = new byte[len];
+        int offset = 0;
+        for (byte[] a : old) {
+            System.arraycopy(a, 0, data, offset, a.length);
+            offset += a.length;
+        }
+        return data;
+    }
+
+    @Override
+    public MultivaluedMap<String, Part> readFrom(Class<MultivaluedMap<String, Part>> type, Type genericType, Annotation[] annotations,
+                                                 MediaType mediaType, MultivaluedMap<String, String> httpHeaders,
+                                                 InputStream entityStream) throws IOException, WebApplicationException {
+        byte[] boundary = extractBoundaryParam(mediaType);
 
         byte[] buffer = this.buffer != null && occupied.compareAndSet(false, true) ?
                 this.buffer :
                 new byte[bufferSize];
         Charset charset = determineCharset(mediaType);
         MultivaluedMap<String, Part> parts = new MultivaluedHashMap<>();
-        ByteArrayOutputStream line = new ByteArrayOutputStream();
-        ContentDisposition contentDisposition = null;
         Map<String, List<String>> partHeaders = new HashMap<>();
-        File tmpFile = null;
-        File dir = location != null && location.length() > 0 ? new File(location) : null;
-        boolean dashBoundary = true, header = false, body = false;
-        boolean[] flags = {false, false}; // foundCR, foundCRLF
-        byte[] match = {AbstractMessageBodyConverter.CRLF[0], AbstractMessageBodyConverter.CRLF[1]};
-        byte[] boundaryMark = new byte[BOUNDARY_MARKS.length + boundary.length];
-        System.arraycopy(BOUNDARY_MARKS, 0, boundaryMark, 0, BOUNDARY_MARKS.length);
-        System.arraycopy(boundary, 0, boundaryMark, BOUNDARY_MARKS.length, boundary.length);
-        int fileSize = 0;
+
+        ContentDisposition contentDisposition = null;
+        byte[] retain = new byte[fileSizeThreshold];
+        int writeAhead = 0;
+        File tmp = null;
+
+        byte[] dashBoundary = merge(BOUNDARY_MARKS, boundary, AbstractMessageBodyConverter.CRLF); // --boundary
+        byte[] delimiter = merge(AbstractMessageBodyConverter.CRLF, BOUNDARY_MARKS, boundary); // \r\n--boundary
+
+        byte[] toMatch = dashBoundary;
+        boolean[] flags = new boolean[toMatch.length];
+
+        boolean processDashBoundary = true, processHeader = false, processBody = false;
         int len;
-        while ((len = entityStream.read(buffer)) > 0) { // loop part
+
+        loopBody: while ((len = entityStream.read(buffer)) > 0) { // loop part
             int next = 0;
-            while (next < len) {
-                next = parse(buffer, next, len, match, flags, line);
-                // part body exceed file size threshold, write to file
-                if (body && !flags[1] && line.size() + buffer.length > fileSizeThreshold) {
-                    tmpFile = tmpFile == null ?
-                            File.createTempFile(contentDisposition.getFileName(), null, dir) :
-                            tmpFile;
-                    fileSize += appendToFile(tmpFile, line.toString().getBytes(charset), false);
-                    line.reset();
+
+            loopBuffer: while (next < len) {
+                // --boundary\r\n
+                if (processDashBoundary) { // first
+                    next = parse(buffer, next, len, toMatch, flags); // already checked, ignore content before dash boundary
+                    processDashBoundary = !flags[flags.length - 1];
+                    processHeader = flags[flags.length - 1];
+                }
+                if (processDashBoundary) {
                     continue;
                 }
-                // boundary/part header/part body not found
-                if (!flags[1]) {
-                    continue;
-                }
-                if (dashBoundary) { // first
-                    checkDashBoundary(boundary, line.toString(StandardCharsets.US_ASCII).substring(0, line.size() - match.length).getBytes(StandardCharsets.US_ASCII));
-                    dashBoundary = false;
-                    header = true;
-                } else if (header) { // second, multi
-                    byte[] hContent = line.toByteArray();
-                    if (hContent.length == AbstractMessageBodyConverter.CRLF.length &&
-                            hContent[0] == AbstractMessageBodyConverter.CRLF[0] &&
-                            hContent[1] == AbstractMessageBodyConverter.CRLF[1]) {
-                        line.reset();
-                        header = false;
-                        match = boundaryMark;
-                        flags = new boolean[match.length];
-                        continue;
-                    }
+                // http: header; parameter\r\n
+                // \r\n
+                // body\r\n
+                // --boundary--
+                if (processHeader) { // second, multi
                     int hi;
-                    for (hi = 0; hi < hContent.length; hi++) {
-                        if (hContent[hi] == ':') {
+                    for(hi = next; hi < len; hi++) {
+                        if (buffer[hi] == ':') {
                             break;
                         }
+                        if (buffer[hi] == AbstractMessageBodyConverter.CRLF[1] &&
+                                hi == (next + 1) &&
+                                buffer[next] == AbstractMessageBodyConverter.CRLF[0]) {
+                            processHeader = false;
+                            toMatch = delimiter;
+                            flags = new boolean[toMatch.length];
+                            next = hi + 1;
+                            continue loopBuffer;
+                        }
                     }
-                    String name = new String(hContent, 0, hi, charset);
-                    String rawValue = new String(hContent, hi + 1, hContent.length - hi -match.length - 1, charset);
-                    if (HttpHeaders.CONTENT_DISPOSITION.equals(name)) {
-                        contentDisposition = ContentDisposition.valueOf(rawValue.trim());
-                    }
-                    // if("_charset_".equals(contentDisposition.getParameter("name")) {}
-                    partHeaders.computeIfAbsent(name, (key) -> new ArrayList<>()).add(rawValue.trim());
-                    body = true;
-                } else if (body){ // next
-                    int realLength = line.size() - match.length -AbstractMessageBodyConverter.CRLF.length; // drop ending CRLF and boundary
-                    byte[] d = new byte[realLength];
-                    System.arraycopy(line.toByteArray(), 0, d, 0, d.length);
-                    if (fileSize +  realLength> maxFileSize) {
-                        tmpFile.delete();
-                        throw new WebApplicationException("file too large", Response.Status.REQUEST_ENTITY_TOO_LARGE);
-                    }
-                    InputStream is;
-                    if (fileSize > 0 || realLength > fileSizeThreshold) {
-                        tmpFile = tmpFile == null ?
-                                File.createTempFile(contentDisposition.getFileName(), null, dir) :
-                                tmpFile; // fileSize > 0
-                        appendToFile(tmpFile, d, true);
-                        fileSize = 0;
-                        is = new FileInputStream(tmpFile);
-                    } else {
-                        is = new ByteArrayInputStream(d);
-                    }
-                    Part part = contentDisposition.getFileName() != null ?
-                            DefaultParts.filePart(contentDisposition.getName(), contentDisposition.getFileName(), partHeaders, is, tmpFile) :
-                            DefaultParts.formPart(contentDisposition.getName(), partHeaders, is, tmpFile);
-                    parts.add(contentDisposition.getName(), part);
-                    flags = new boolean[2];
-                    body = false;
-                    tmpFile = null;
-                    contentDisposition = null;
-                    match = new byte[] {AbstractMessageBodyConverter.CRLF[0], AbstractMessageBodyConverter.CRLF[1]};
-                } else { // separator or last
-                    byte[] sep = line.toByteArray();
-                    if (sep.length != 2) {
-                        throw new WebApplicationException(Response.Status.BAD_REQUEST);
-                    } else if (next == len && (sep[0] != BOUNDARY_MARKS[0] || sep[1] != BOUNDARY_MARKS[1])) {
-                        throw new WebApplicationException("Bad end boundary", Response.Status.BAD_REQUEST);
-                    } else if (next < len && (sep[0] != AbstractMessageBodyConverter.CRLF[0] || sep[1] != AbstractMessageBodyConverter.CRLF[1])) {
-                        throw new WebApplicationException("Bad part body separator", Response.Status.BAD_REQUEST);
-                    }
-                    partHeaders = new HashMap<>();
-                    dashBoundary = true;
-                }
+                    String headerName = new String(buffer, next, hi - next, StandardCharsets.US_ASCII);
+                    toMatch = AbstractMessageBodyConverter.CRLF;
+                    flags = new boolean[toMatch.length];
 
-                line.reset();
+                    next = parse(buffer, hi + 1, len, toMatch, flags); // no CRLF in value, https://datatracker.ietf.org/doc/html/rfc2822#section-2.3
+                    String headerValue = new String(buffer, hi + 1, next - hi - 1 - toMatch.length);
+                    if (HttpHeaders.CONTENT_DISPOSITION.equals(headerName)) {
+                        contentDisposition = ContentDisposition.valueOf(headerValue.trim());
+                    }
+                    // if("_charset_".equals(contentDisposition.getParameter("name")) { charset = Charset.forName("");}
+                    partHeaders.computeIfAbsent(headerName, (key) -> new ArrayList<>()).add(headerValue.trim());
+                    processBody = true;
+                } else if (processBody){ // next
+                    toMatch = delimiter;
+                    flags = new boolean[toMatch.length];
+                    int pos = parse(buffer, next, len, toMatch, flags);
+
+                    if (writeAhead + pos - next > maxFileSize) {
+                        throw new WebApplicationException("file too large", Response.Status.BAD_REQUEST);
+                    }
+                    int toCut = flags[flags.length - 1] ? toMatch.length : 0;
+                    if (writeAhead + pos - next <= fileSizeThreshold) {
+                        System.arraycopy(buffer, next, retain, writeAhead, pos - next);
+                    } else if (tmp == null){ // exceed, once wrote
+                        tmp = new File(location, contentDisposition.getFileName());
+                        appendToFile(tmp, retain, 0, writeAhead, false);
+                        appendToFile(tmp, buffer, next, pos- next - toCut, flags[flags.length - 1]);
+                    } else {
+                        appendToFile(tmp, buffer, next, pos - next - toCut, flags[flags.length - 1]);
+                    }
+                    writeAhead += pos - next;
+                    next = pos;
+                    if (!flags[flags.length - 1]) {
+                        continue;
+                    }
+                    InputStream is = writeAhead > fileSizeThreshold ? new FileInputStream(tmp) : new ByteArrayInputStream(retain, 0, writeAhead);
+                    Part part = contentDisposition.getFileName() != null ?
+                            DefaultParts.filePart(contentDisposition.getName(), contentDisposition.getFileName(), partHeaders, is, tmp) :
+                            DefaultParts.formPart(contentDisposition.getName(), partHeaders, is);
+                    parts.add(contentDisposition.getName(), part);
+                    writeAhead = 0;
+                    processBody = false;
+                    contentDisposition = null;
+                } else { // separator or last
+                    if (buffer[next] == AbstractMessageBodyConverter.CRLF[0] &&
+                            next + 1 < len &&
+                            buffer[next + 1] == AbstractMessageBodyConverter.CRLF[1]) {
+                        partHeaders = new HashMap<>();
+                        processDashBoundary = true;
+                    } else if (buffer[next] == BOUNDARY_MARKS[0] &&
+                            next + 1 < len &&
+                            buffer[next + 1] == BOUNDARY_MARKS[1]) {
+                        break loopBody; // ignore epilogue
+                    } else {
+                        throw new WebApplicationException(Response.Status.BAD_REQUEST);
+                    }
+                }
                 reset(flags);
             }
         }
@@ -227,17 +260,16 @@ public class MultipartHttpMessageReader extends AbstractMessageBodyConverter imp
         return parts;
     }
 
-    private int appendToFile(File tmpFile, byte[] data, boolean flush) throws IOException {
+    private void appendToFile(File tmpFile, byte[] data, int offset, int len, boolean flush) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(tmpFile, true)) {
-            fos.write(data);
+            fos.write(data, offset, len);
             if (flush) {
                 fos.flush();
             }
-            return data.length;
         }
     }
 
-    int parse(byte[] buffer, int start, int len, byte[] match, boolean[] flags, ByteArrayOutputStream line) {
+    int parse(byte[] buffer, int start, int len, byte[] match, boolean[] flags) {
         int position;
 
         loop:
@@ -255,8 +287,6 @@ public class MultipartHttpMessageReader extends AbstractMessageBodyConverter imp
                 }
             }
         }
-
-        line.write(buffer, start, position - start);
         return position;
     }
 
@@ -271,7 +301,7 @@ public class MultipartHttpMessageReader extends AbstractMessageBodyConverter imp
     }
 
     private void check(byte[] data) {
-        if (data.length == 0 || data.length > 70) {
+        if (data.length == 0 || data.length > MAX_BOUNDARY_LENGTH) {
             throw new WebApplicationException("Illegal boundary length", Response.Status.BAD_REQUEST);
         }
         for (byte c : data) {
@@ -293,19 +323,6 @@ public class MultipartHttpMessageReader extends AbstractMessageBodyConverter imp
             }
             if (!found) {
                 throw new WebApplicationException("Illegal boundary character", Response.Status.BAD_REQUEST);
-            }
-        }
-    }
-
-    private void checkDashBoundary(byte[] boundary, byte[] data) {
-        if (data.length != boundary.length + BOUNDARY_MARKS.length) {
-            throw new WebApplicationException("body boundary length not match", Response.Status.BAD_REQUEST);
-        }
-        for (int i = 0; i < data.length; i++) {
-            if (i < BOUNDARY_MARKS.length && data[i] != BOUNDARY_MARKS[i]) {
-                throw new WebApplicationException("body boundary must start with '--", Response.Status.BAD_REQUEST);
-            } else if (i >= BOUNDARY_MARKS.length && data[i] != boundary[i - BOUNDARY_MARKS.length]) {
-                throw new WebApplicationException("body boundary doesn't match", Response.Status.BAD_REQUEST);
             }
         }
     }
