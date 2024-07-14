@@ -1,10 +1,10 @@
 package bandung.ee.rs.codec;
 
-import javax.ws.rs.WebApplicationException;
+import javax.ws.rs.BadRequestException;
 import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -51,7 +51,7 @@ public abstract class AbstractMessageBodyConverter {
                 charset = this.charset;
             }
         } catch (IllegalArgumentException iae) {
-            throw new WebApplicationException("unsupported charset " + cs, Response.Status.BAD_REQUEST);
+            throw new BadRequestException("unsupported charset " + cs);
         }
         return charset;
     }
@@ -64,6 +64,13 @@ public abstract class AbstractMessageBodyConverter {
     protected Writer wrapOutputStream(MediaType mediaType, OutputStream os) {
         Writer writer = new OutputStreamWriter(os, determineCharset(mediaType));
         return bufferSize <= 0 ? writer : new BufferedWriter(writer);
+    }
+
+    static void copy(byte[] buffer, InputStream is, OutputStream os) throws IOException {
+        int len;
+        while ((len = is.read(buffer)) != -1) {
+            os.write(buffer, 0, len);
+        }
     }
 
     public void setBufferSize(int bufferSize) {

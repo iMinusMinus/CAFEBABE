@@ -8,10 +8,11 @@ import javax.json.JsonReader;
 import javax.json.JsonStructure;
 import javax.json.JsonWriter;
 import javax.json.stream.JsonParsingException;
+import javax.ws.rs.BadRequestException;
+import javax.ws.rs.InternalServerErrorException;
 import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedMap;
-import javax.ws.rs.core.Response;
 import javax.ws.rs.ext.MessageBodyReader;
 import javax.ws.rs.ext.MessageBodyWriter;
 import java.io.IOException;
@@ -54,11 +55,11 @@ public class JsonStructHttpMessageConverter extends AbstractMessageBodyConverter
         try (JsonReader reader = Json.createReader(entityStream)) {
             return reader.read();
         } catch (JsonParsingException jpe) {
-            throw new WebApplicationException(jpe.getMessage(), jpe, Response.Status.BAD_REQUEST);
+            throw new BadRequestException(jpe.getMessage(), jpe);
         } catch (JsonException je) {
             throw new IOException(je.getMessage(), je);
         } catch (IllegalStateException ise) {
-            throw new WebApplicationException(ise.getMessage(), ise, Response.Status.INTERNAL_SERVER_ERROR);
+            throw new InternalServerErrorException(ise.getMessage(), ise);
         }
     }
 
@@ -76,7 +77,7 @@ public class JsonStructHttpMessageConverter extends AbstractMessageBodyConverter
         } catch (JsonException je) {
             throw new IOException(je.getMessage(), je);
         } catch (IllegalStateException ise) {
-            throw new WebApplicationException(ise.getMessage(), ise, Response.Status.INTERNAL_SERVER_ERROR);
+            throw new InternalServerErrorException(ise.getMessage(), ise);
         }
     }
 

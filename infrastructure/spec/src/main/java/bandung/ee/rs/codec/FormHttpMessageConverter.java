@@ -6,6 +6,7 @@ import javax.ws.rs.Consumes;
 import javax.ws.rs.Priorities;
 import javax.ws.rs.Produces;
 import javax.ws.rs.WebApplicationException;
+import javax.ws.rs.core.Context;
 import javax.ws.rs.core.Form;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedHashMap;
@@ -65,9 +66,11 @@ public class FormHttpMessageConverter<T> extends AbstractMessageBodyConverter im
         this(StandardCharsets.UTF_8, 64);
     }
 
-    public FormHttpMessageConverter(Charset charset, int bufferSize) {
+    @Inject
+    public FormHttpMessageConverter(@Context Charset charset, @Context int bufferSize) {
         super(charset, bufferSize, MediaType.APPLICATION_FORM_URLENCODED_TYPE);
         this.buffer = bufferSize < 0 ? new char[-bufferSize] : null;
+        this.bufferSize = bufferSize < 0 ? -bufferSize : bufferSize;
     }
 
     @Override
@@ -79,28 +82,31 @@ public class FormHttpMessageConverter<T> extends AbstractMessageBodyConverter im
     public T readFrom(Class<T> type, Type genericType, Annotation[] annotations,
                          MediaType mediaType, MultivaluedMap<String, String> httpHeaders,
                          InputStream entityStream) throws IOException, WebApplicationException {
+        Charset charset = determineCharset(mediaType);
+
         char[] buffer = this.buffer != null && occupied.compareAndSet(false, true) ?
                 this.buffer :
                 new char[bufferSize];
-        Charset charset = determineCharset(mediaType);
-        // The implementation should not close the input stream.
-        Reader reader = new InputStreamReader(entityStream, charset);
-        MultivaluedMap<String, String> kv = new MultivaluedHashMap<>();
-        StringBuilder key = new StringBuilder();
-        StringBuilder value = new StringBuilder();
-        boolean[] flags = {false, false}; // keyFound, valueFound
-        int len;
-        while ((len = reader.read(buffer)) > 0) {
-            parse(kv, buffer, len, key, value, flags, charset);
+        try {
+            // The implementation should not close the input stream.
+            Reader reader = new InputStreamReader(entityStream, charset);
+            MultivaluedMap<String, String> kv = new MultivaluedHashMap<>();
+            StringBuilder key = new StringBuilder();
+            StringBuilder value = new StringBuilder();
+            boolean[] flags = {false, false}; // keyFound, valueFound
+            int len;
+            while ((len = reader.read(buffer)) > 0) {
+                parse(kv, buffer, len, key, value, flags, charset);
+            }
+            if (!key.isEmpty()) { // last pair
+                kv.add(URLDecoder.decode(key.toString(), charset), URLDecoder.decode(value.toString(), charset));
+            }
+            return type == Form.class ? type.cast(new Form(kv)) : type.cast(kv);
+        } finally {
+            if (this.buffer == buffer) {
+                occupied.compareAndSet(true, false);
+            }
         }
-        if (!key.isEmpty()) { // last pair
-            kv.add(URLDecoder.decode(key.toString(), charset), URLDecoder.decode(value.toString(), charset));
-        }
-
-        if (this.buffer == buffer) {
-            occupied.compareAndSet(true, false);
-        }
-        return type == Form.class ? type.cast(new Form(kv)) : type.cast(kv);
     }
 
     void parse(MultivaluedMap<String, String> kv, char[] buffer, int len,
@@ -168,7 +174,7 @@ public class FormHttpMessageConverter<T> extends AbstractMessageBodyConverter im
         if (type == Form.class) {
             return true;
         }
-        if (type == MultivaluedMap.class) {
+        if (MultivaluedMap.class.isAssignableFrom(type)) {
             if (type == genericType) {
                 return true;
             }

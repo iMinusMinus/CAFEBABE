@@ -3,10 +3,10 @@ package bandung.ee.rs.codec;
 import lombok.Getter;
 import lombok.Setter;
 
+import javax.ws.rs.InternalServerErrorException;
 import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedMap;
-import javax.ws.rs.core.Response;
 import javax.ws.rs.ext.MessageBodyReader;
 import javax.ws.rs.ext.MessageBodyWriter;
 import javax.xml.bind.JAXBContext;
@@ -48,7 +48,7 @@ public class XmlHttpMessageConverter<T> extends AbstractMessageBodyConverter imp
         try {
             return JAXBContext.newInstance(key);
         } catch (JAXBException jaxb) {
-            throw new WebApplicationException(Response.Status.INTERNAL_SERVER_ERROR);
+            throw new InternalServerErrorException(jaxb.getMessage(), jaxb);
         }
     };
 
@@ -111,7 +111,7 @@ public class XmlHttpMessageConverter<T> extends AbstractMessageBodyConverter imp
             JAXBElement<?> jaxbElement = unmarshaller.unmarshal(eventReader, actualType); // let unmarshaller handle jaxb annotations
             return type == actualType ? type.cast(jaxbElement.getValue()) : type.cast(jaxbElement);
         } catch (JAXBException je) {
-            throw new WebApplicationException(je.getMessage(), je, Response.Status.INTERNAL_SERVER_ERROR);
+            throw new InternalServerErrorException(je.getMessage(), je);
         } catch (XMLStreamException xe) {
             throw new IOException(xe.getMessage(), xe);
         } finally {
@@ -143,7 +143,7 @@ public class XmlHttpMessageConverter<T> extends AbstractMessageBodyConverter imp
             marshaller.setProperty(Marshaller.JAXB_ENCODING, charset);
             marshaller.marshal(t, entityStream);
         } catch (JAXBException je) {
-            throw new WebApplicationException(je.getMessage(), je, Response.Status.INTERNAL_SERVER_ERROR);
+            throw new InternalServerErrorException(je.getMessage(), je);
         }
     }
 

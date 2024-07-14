@@ -5,19 +5,13 @@ import org.w3c.dom.Node;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
-import javax.annotation.Priority;
-import javax.inject.Inject;
-import javax.ws.rs.Consumes;
-import javax.ws.rs.Priorities;
-import javax.ws.rs.Produces;
+import javax.ws.rs.BadRequestException;
+import javax.ws.rs.InternalServerErrorException;
 import javax.ws.rs.WebApplicationException;
-import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedMap;
-import javax.ws.rs.core.Response;
 import javax.ws.rs.ext.MessageBodyReader;
 import javax.ws.rs.ext.MessageBodyWriter;
-import javax.ws.rs.ext.Provider;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.parsers.SAXParserFactory;
@@ -55,10 +49,6 @@ import java.nio.charset.StandardCharsets;
  * @author iMinusMinus
  * @date 2024-06-29
  */
-@Provider
-@Produces({MediaType.APPLICATION_XML, MediaType.TEXT_XML, "*/xml"})
-@Consumes({MediaType.APPLICATION_XML, MediaType.TEXT_XML, "*/xml"})
-@Priority(Priorities.ENTITY_CODER + 100)
 public class XmlSourceHttpMessageConverter<T> extends AbstractMessageBodyConverter implements MessageBodyReader<T>, MessageBodyWriter<T> {
 
     static final String ANY_XML = "+xml";
@@ -83,13 +73,12 @@ public class XmlSourceHttpMessageConverter<T> extends AbstractMessageBodyConvert
                 XMLInputFactory.newInstance(), XMLOutputFactory.newInstance());
     }
 
-    @Inject
-    public XmlSourceHttpMessageConverter(@Context Charset charset, @Context int bufferSize,
-                                         @Context DocumentBuilderFactory documentBuilderFactory,
-                                         @Context SAXParserFactory saxParserFactory,
-                                         @Context TransformerFactory transformerFactory,
-                                         @Context XMLInputFactory xmlInputFactory,
-                                         @Context XMLOutputFactory xmlOutputFactory) {
+    public XmlSourceHttpMessageConverter(Charset charset, int bufferSize,
+                                         DocumentBuilderFactory documentBuilderFactory,
+                                         SAXParserFactory saxParserFactory,
+                                         TransformerFactory transformerFactory,
+                                         XMLInputFactory xmlInputFactory,
+                                         XMLOutputFactory xmlOutputFactory) {
         super(charset, bufferSize, MediaType.APPLICATION_XML_TYPE, MediaType.TEXT_XML_TYPE);
         this.documentBuilderFactory = documentBuilderFactory;
         this.saxParserFactory = saxParserFactory;
@@ -127,9 +116,9 @@ public class XmlSourceHttpMessageConverter<T> extends AbstractMessageBodyConvert
                 obj = new StAXSource(xmlInputFactory.createXMLEventReader(entityStream, charset.name()));
             }
         } catch (SAXException se) {
-            throw new WebApplicationException(se.getMessage(), se, Response.Status.BAD_REQUEST);
+            throw new BadRequestException(se.getMessage(), se);
         } catch (ParserConfigurationException | XMLStreamException pe) {
-            throw new WebApplicationException(pe.getMessage(), pe, Response.Status.INTERNAL_SERVER_ERROR);
+            throw new InternalServerErrorException(pe.getMessage(), pe);
         }
         return type.cast(obj);
     }
@@ -166,7 +155,7 @@ public class XmlSourceHttpMessageConverter<T> extends AbstractMessageBodyConvert
             }
             transformerFactory.newTransformer().transform(source, sr);
         }  catch (ParserConfigurationException | SAXException | TransformerException e) {
-            throw new WebApplicationException(e.getMessage(), e, Response.Status.INTERNAL_SERVER_ERROR);
+            throw new InternalServerErrorException(e.getMessage(), e);
         }
     }
 
@@ -182,7 +171,7 @@ public class XmlSourceHttpMessageConverter<T> extends AbstractMessageBodyConvert
                 xmlStreamWriter = xmlOutputFactory.createXMLStreamWriter(entityStream, charset.name());
                 copy(xmlStreamReader, xmlStreamWriter);
             } catch (XMLStreamException xe) {
-                throw new WebApplicationException(xe.getMessage(), xe, Response.Status.INTERNAL_SERVER_ERROR);
+                throw new InternalServerErrorException(xe.getMessage(), xe);
             } finally {
                 close(xmlStreamReader, xmlStreamWriter);
             }
@@ -192,7 +181,7 @@ public class XmlSourceHttpMessageConverter<T> extends AbstractMessageBodyConvert
                 xmlEventWriter = xmlOutputFactory.createXMLEventWriter(entityStream, charset.name());
                 copy(xmlEventReader, xmlEventWriter);
             } catch (XMLStreamException xe) {
-                throw new WebApplicationException(xe.getMessage(), xe, Response.Status.INTERNAL_SERVER_ERROR);
+                throw new InternalServerErrorException(xe.getMessage(), xe);
             } finally {
                 close(xmlEventReader, xmlEventWriter);
             }
@@ -281,7 +270,7 @@ public class XmlSourceHttpMessageConverter<T> extends AbstractMessageBodyConvert
         try {
             writer.flush();
             writer.close();
-        } catch (XMLStreamException e) {
+        } catch (XMLStreamException ignore) {
         }
     }
 
