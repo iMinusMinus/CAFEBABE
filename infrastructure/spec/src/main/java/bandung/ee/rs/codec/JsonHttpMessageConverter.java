@@ -1,6 +1,7 @@
 package bandung.ee.rs.codec;
 
 import javax.json.bind.Jsonb;
+import javax.json.bind.JsonbBuilder;
 import javax.json.bind.JsonbException;
 import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.MediaType;
@@ -32,11 +33,11 @@ public class JsonHttpMessageConverter extends AbstractMessageBodyConverter imple
 
     private final Jsonb converter;
 
-    public JsonHttpMessageConverter(Jsonb converter) {
-        this(StandardCharsets.UTF_8, 64, converter);
+    public JsonHttpMessageConverter() {
+        this(StandardCharsets.UTF_8, 64, JsonbBuilder.create());
     }
 
-    public JsonHttpMessageConverter(Charset charset,int bufferSize, Jsonb converter) {
+    public JsonHttpMessageConverter(Charset charset, int bufferSize, Jsonb converter) {
         super(charset, bufferSize, MediaType.APPLICATION_JSON_TYPE, MediaType.APPLICATION_JSON_PATCH_JSON_TYPE);
         this.converter = converter;
     }

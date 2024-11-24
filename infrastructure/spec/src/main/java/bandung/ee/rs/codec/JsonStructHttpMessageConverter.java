@@ -1,12 +1,12 @@
 package bandung.ee.rs.codec;
 
 import javax.json.Json;
-import javax.json.JsonArray;
 import javax.json.JsonException;
-import javax.json.JsonObject;
 import javax.json.JsonReader;
+import javax.json.JsonReaderFactory;
 import javax.json.JsonStructure;
 import javax.json.JsonWriter;
+import javax.json.JsonWriterFactory;
 import javax.json.stream.JsonParsingException;
 import javax.ws.rs.BadRequestException;
 import javax.ws.rs.InternalServerErrorException;
@@ -22,6 +22,7 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 
 /**
  * JSONP读写
@@ -35,12 +36,23 @@ public class JsonStructHttpMessageConverter extends AbstractMessageBodyConverter
 
     static final String ANY_JSON = "+json";
 
+    private final JsonReaderFactory jsonReaderFactory;
+
+    private final JsonWriterFactory jsonWriterFactory;
+
     public JsonStructHttpMessageConverter() {
         this(StandardCharsets.UTF_8, 64);
     }
 
     public JsonStructHttpMessageConverter(Charset charset, int bufferSize) {
+        this(charset, bufferSize, Json.createReaderFactory(Collections.emptyMap()), Json.createWriterFactory(Collections.emptyMap()));
+    }
+
+    public JsonStructHttpMessageConverter(Charset charset, int bufferSize,
+                                          JsonReaderFactory jsonReaderFactory, JsonWriterFactory jsonWriterFactory) {
         super(charset, bufferSize);
+        this.jsonReaderFactory = jsonReaderFactory;
+        this.jsonWriterFactory = jsonWriterFactory;
     }
 
     @Override
@@ -52,7 +64,7 @@ public class JsonStructHttpMessageConverter extends AbstractMessageBodyConverter
     public JsonStructure readFrom(Class<JsonStructure> type, Type genericType, Annotation[] annotations,
                                   MediaType mediaType, MultivaluedMap<String, String> httpHeaders,
                                   InputStream entityStream) throws IOException, WebApplicationException {
-        try (JsonReader reader = Json.createReader(entityStream)) {
+        try (JsonReader reader = jsonReaderFactory.createReader(entityStream)) {
             return reader.read();
         } catch (JsonParsingException jpe) {
             throw new BadRequestException(jpe.getMessage(), jpe);
@@ -72,7 +84,7 @@ public class JsonStructHttpMessageConverter extends AbstractMessageBodyConverter
     public void writeTo(JsonStructure jsonStructure, Class<?> type, Type genericType, Annotation[] annotations,
                         MediaType mediaType, MultivaluedMap<String, Object> httpHeaders,
                         OutputStream entityStream) throws IOException, WebApplicationException {
-        try (JsonWriter writer = Json.createWriter(entityStream)) {
+        try (JsonWriter writer = jsonWriterFactory.createWriter(entityStream)) {
             writer.write(jsonStructure);
         } catch (JsonException je) {
             throw new IOException(je.getMessage(), je);
@@ -82,9 +94,7 @@ public class JsonStructHttpMessageConverter extends AbstractMessageBodyConverter
     }
 
     private boolean isCompatible(Class<?> type) {
-        return JsonStructure.class.isAssignableFrom(type) ||
-                JsonObject.class.isAssignableFrom(type) ||
-                JsonArray.class.isAssignableFrom(type);
+        return JsonStructure.class.isAssignableFrom(type);
     }
 
     private boolean isCompatible(MediaType mediaType) {
