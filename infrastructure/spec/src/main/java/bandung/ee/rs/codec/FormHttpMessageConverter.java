@@ -19,6 +19,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.Reader;
+import java.io.UnsupportedEncodingException;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
@@ -98,8 +99,8 @@ public class FormHttpMessageConverter<T> extends AbstractMessageBodyConverter im
             while ((len = reader.read(buffer)) > 0) {
                 parse(kv, buffer, len, key, value, flags, charset);
             }
-            if (!key.isEmpty()) { // last pair
-                kv.add(URLDecoder.decode(key.toString(), charset), URLDecoder.decode(value.toString(), charset));
+            if (key.length() != 0) { // last pair
+                kv.add(URLDecoder.decode(key.toString(), charset.name()), URLDecoder.decode(value.toString(), charset.name()));
             }
             return type == Form.class ? type.cast(new Form(kv)) : type.cast(kv);
         } finally {
@@ -127,7 +128,10 @@ public class FormHttpMessageConverter<T> extends AbstractMessageBodyConverter im
                     }
             }
             if (flags[0] && flags[1]) {
-                kv.add(URLDecoder.decode(key.toString(), charset), URLDecoder.decode(value.toString(), charset));
+                try {
+                    kv.add(URLDecoder.decode(key.toString(), charset.name()), URLDecoder.decode(value.toString(), charset.name()));
+                } catch (UnsupportedEncodingException impossible) {
+                }
                 key.delete(0, key.length());
                 value.delete(0, value.length());
                 flags[0] = false;
@@ -154,11 +158,11 @@ public class FormHttpMessageConverter<T> extends AbstractMessageBodyConverter im
         Charset charset = determineCharset(mediaType);
         for (Iterator<Map.Entry<String, List<String>>> it = map.entrySet().iterator(); it.hasNext();) {
             Map.Entry<String, List<String>> entry = it.next();
-            String key = URLEncoder.encode(entry.getKey(), charset); // ignore Encoded
+            String key = URLEncoder.encode(entry.getKey(), charset.name()); // ignore Encoded
             for (Iterator<String> values = entry.getValue().iterator(); values.hasNext();) {
                 entityStream.write(key.getBytes(charset));
                 entityStream.write('=');
-                entityStream.write(URLEncoder.encode(values.next(), charset).getBytes(charset)); // ignore Encoded
+                entityStream.write(URLEncoder.encode(values.next(), charset.name()).getBytes(charset)); // ignore Encoded
                 if (values.hasNext()) {
                     entityStream.write('&');
                 }

@@ -70,7 +70,12 @@ public class XmlHttpMessageConverter<T> extends AbstractMessageBodyConverter imp
         this.xmlInputFactory = XMLInputFactory.newInstance();
         this.xmlInputFactory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
         this.xmlInputFactory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
-        this.xmlInputFactory.setXMLResolver((publicID, systemID, base, ns) -> InputStream.nullInputStream());
+        this.xmlInputFactory.setXMLResolver((publicID, systemID, base, ns) -> new InputStream() {
+            @Override
+            public int read() {
+                return -1;
+            }
+        });
     }
 
     public XmlHttpMessageConverter(Charset charset, int bufferSize, boolean cache, XMLInputFactory xmlInputFactory) {

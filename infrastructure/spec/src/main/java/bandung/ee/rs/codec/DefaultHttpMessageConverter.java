@@ -94,7 +94,7 @@ public class DefaultHttpMessageConverter<T> extends AbstractMessageBodyConverter
         Object obj;
         if (type == byte[].class || type == String.class) {
             ByteArrayOutputStream baos = new ByteArrayOutputStream(bufferSize);
-            byte[] buffer = this.buffer != null && occupied.compareAndExchange(false, true) ?
+            byte[] buffer = this.buffer != null && occupied.compareAndSet(false, true) ?
                     this.buffer :
                     new byte[bufferSize];
             try {
@@ -109,7 +109,7 @@ public class DefaultHttpMessageConverter<T> extends AbstractMessageBodyConverter
             obj = new InputStreamReader(entityStream, charset);
         } else if (File.class.isAssignableFrom(type)) {
             File tmp = new File(System.getProperty("java.io.tmpdir"), System.currentTimeMillis() + ".jaxrs.tmp");
-            byte[] buffer = this.buffer != null && occupied.compareAndExchange(false, true) ?
+            byte[] buffer = this.buffer != null && occupied.compareAndSet(false, true) ?
                     this.buffer :
                     new byte[bufferSize];
             try (FileOutputStream fos = new FileOutputStream(tmp)) {
@@ -129,9 +129,9 @@ public class DefaultHttpMessageConverter<T> extends AbstractMessageBodyConverter
         } else if (type == InputStream.class){
             obj = entityStream;
         } else { // subclass of StreamingOutput or InputStream
-            Constructor<?> ctor = Arrays.stream(type.getDeclaredConstructors()).filter(STREAMING_SUB_CLASS_CTOR_PREDICATE)
+            Constructor<?> ctor = Arrays.asList(type.getDeclaredConstructors()).stream().filter(STREAMING_SUB_CLASS_CTOR_PREDICATE)
                     .findFirst()
-                    .orElseThrow();
+                    .orElseThrow(InternalServerErrorException::new);
             try {
                 obj = ctor.newInstance(entityStream);
             } catch (Exception e) {
