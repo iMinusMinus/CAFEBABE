@@ -282,4 +282,66 @@ public class JsonFactoryAdapterTest {
         });
         System.out.println(e.getLocation());
     }
+
+    @Test
+    public void testTooManyCharacters() {
+        Map<String, Integer> map = new HashMap<>();
+        map.put(JsonFactoryAdapter.JSONP_CONFIG_PREFIX + "parser.maxTokenCount", 8);
+        JsonFactoryAdapter adapter = new JsonFactoryAdapter(map);
+        javax.json.JsonException e = Assertions.assertThrows(javax.json.JsonException.class, () -> {
+            javax.json.stream.JsonParser parser = adapter.createParser(new ByteArrayInputStream("{\"key\":1}".getBytes(StandardCharsets.UTF_8)));
+            while(parser.hasNext()) {
+                parser.next();
+                System.out.println(parser.getValue());
+            }
+        });
+        System.out.println(e.getMessage());
+    }
+
+    @Test
+    public void testNameTooLong() {
+        Map<String, Integer> map = new HashMap<>();
+        map.put(JsonFactoryAdapter.JSONP_CONFIG_PREFIX + "parser.maxNameLength", 10);
+        JsonFactoryAdapter adapter = new JsonFactoryAdapter(map);
+        javax.json.JsonException e = Assertions.assertThrows(javax.json.JsonException.class, () -> {
+            javax.json.stream.JsonParser parser = adapter.createParser(new ByteArrayInputStream("{\"longLongAgo\":\"羊肉串\"}".getBytes(StandardCharsets.UTF_8)));
+            while(parser.hasNext()) {
+                parser.next();
+                System.out.println(parser.getValue());
+            }
+        });
+        System.out.println(e.getMessage());
+    }
+    @Test
+    public void testNameInRange() {
+        Map<String, Integer> map = new HashMap<>();
+        map.put(JsonFactoryAdapter.JSONP_CONFIG_PREFIX + "parser.maxNameLength", 8);
+        map.put(JsonFactoryAdapter.JSONP_CONFIG_PREFIX + "parser.maxStringLength", 256);
+        JsonFactoryAdapter adapter = new JsonFactoryAdapter(map);
+        javax.json.JsonException e = Assertions.assertThrows(javax.json.JsonException.class, () -> {
+            javax.json.stream.JsonParser parser = adapter.createParser(new ByteArrayInputStream("{\"桃花庵歌\":\"桃花坞里桃花庵，桃花庵里桃花仙。桃花仙人种桃树，又折花枝当酒钱。酒醒只在花前坐，酒醉还须花下眠。花前花后日复日，酒醉酒醒年复年。不愿鞠躬车马前，但愿老死花酒间。车尘马足贵者趣，酒盏花枝贫者缘。若将富贵比贫贱，一在平地一在天。若将贫贱比车马，他得驱驰我得闲。世人笑我忒疯颠，我咲世人看不穿。记得五陵豪杰墓，无酒无花锄作田\n桃花坞里桃花庵，桃花庵里桃花仙。桃花仙人种桃树，又摘桃花换酒钱。酒醒只在花前坐，酒醉还来花下眠。半醒半醉日复日，花落花开年复年。但愿老死花酒间，不愿鞠躬车马前。车尘马足富者趣，酒盏花枝贫者缘。若将富贵比贫者，一在平地一在天。若将贫贱比车马，他得驱驰我得闲。别人笑我忒风颠，我笑他人看不穿。不见五陵豪杰墓，无花无酒锄作田\"}".getBytes(StandardCharsets.UTF_8)));
+            while(parser.hasNext()) {
+                parser.next();
+                System.out.println(parser.getValue());
+            }
+        });
+        System.out.println(e.getMessage());
+    }
+
+
+    @Test
+    public void testNumberTooLong() {
+        String pi = "3.14159265358979323846264338327950288419716939937510582097494459230781640628620899862803482534211706798214808651328230664709384460955058223172535940812848111745028410270193852110555964462294895493038196442881097566593344612847564823378678316527120190914564856692346034861045432664821339360726024914127372458700660631558817488152092096282925409171536436789259036001133053054882046652138414695194151160943305727036575959195309218611738193261179310511854807446237996274956735188575272489122793818301194912";
+        Map<String, Integer> map = new HashMap<>();
+        map.put(JsonFactoryAdapter.JSONP_CONFIG_PREFIX + "parser.maxNumberLength", 512);
+        JsonFactoryAdapter adapter = new JsonFactoryAdapter(map);
+        javax.json.JsonException e = Assertions.assertThrows(javax.json.JsonException.class, () -> {
+            javax.json.stream.JsonParser parser = adapter.createParser(new ByteArrayInputStream(pi.getBytes(StandardCharsets.UTF_8)));
+            while(parser.hasNext()) {
+                parser.next();
+                System.out.println(parser.getValue());
+            }
+        });
+        System.out.println(e.getMessage());
+    }
 }

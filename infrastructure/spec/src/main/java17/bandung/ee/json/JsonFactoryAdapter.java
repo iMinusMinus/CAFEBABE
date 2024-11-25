@@ -413,14 +413,14 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
         }
 
         private void init(Map<String, ?> config) {
-            Short maxIdentifierLength = (Short) config.get(JSONP_CONFIG_PREFIX + "parser.maxNameLength");
-            this.maxIdentifierLength = maxIdentifierLength != null ? maxIdentifierLength : (Long.SIZE - 1);
-            Integer maxStringLength = (Integer) config.get(JSONP_CONFIG_PREFIX + "parser.maxStringLen");
-            this.maxStringLength = maxStringLength != null ? maxStringLength : (Short.MAX_VALUE * Byte.SIZE);
+            Number maxIdentifierLength = (Number) config.get(JSONP_CONFIG_PREFIX + "parser.maxNameLength");
+            this.maxIdentifierLength = maxIdentifierLength != null ? (short) Math.max(8, maxIdentifierLength.shortValue()) : (Long.SIZE - 1);
+            Integer maxStringLength = (Integer) config.get(JSONP_CONFIG_PREFIX + "parser.maxStringLength");
+            this.maxStringLength = maxStringLength != null ? Math.max(INITIAL_SIZE, maxStringLength) : (Short.MAX_VALUE * Byte.SIZE);
             Integer maxNumberLength = (Integer) config.get(JSONP_CONFIG_PREFIX + "parser.maxNumberLength");
-            this.maxNumberLength = maxNumberLength != null ? maxNumberLength : (Integer.SIZE * Integer.SIZE);
+            this.maxNumberLength = maxNumberLength != null ? Math.max(INITIAL_SIZE, maxNumberLength) : (Integer.SIZE * Integer.SIZE);
             Integer maxTokenCount = (Integer) config.get(JSONP_CONFIG_PREFIX + "parser.maxTokenCount");
-            this.maxTokenCount = maxTokenCount != null ? maxTokenCount : -1;
+            this.maxTokenCount = maxTokenCount != null ? maxTokenCount : (Short.MAX_VALUE * Short.SIZE);
             buffer = new char[INITIAL_SIZE];
         }
 
@@ -441,6 +441,9 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                 } catch (IOException ioe) {
                     throw new JsonException(ioe.getMessage(), ioe);
                 }
+            }
+            if (maxTokenCount > 0 && offset + readMark - writeMark > maxTokenCount) {
+                throw new JsonException("too many character");
             }
             return readMark - writeMark;
         }
@@ -725,13 +728,16 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                         }
                         break;
                 }
+                if (writeMark - mark - 1 > maxValueLength) {
+                    throw new JsonException("string length exceed max size: " + maxValueLength);
+                }
                 if (writeMark >= readMark) {
                     if (mark > 0 && readMark < buffer.length) {
                         moveToHead(0);
                     }  else if (buffer.length < maxValueLength) {
                         moveToHead(Math.min((int) (buffer.length * 1.5), maxValueLength));
                     } else {
-                        throw new JsonParsingException("string length exceed max size: " + maxValueLength, new TokenLocation(line, column, offset));
+                        throw new JsonException("string length exceed max size: " + maxValueLength);
                     }
                 }
             }
@@ -744,7 +750,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                 switch (buffer[writeMark++]) {
                     case LOWER_EXPONENT: // pass through
                     case UPPER_EXPONENT: // pass through
-                        if (buffer[writeMark - 2] == '.') {
+                        if (buffer[writeMark - 2] == DOT) {
                             throw new JsonParsingException("e/E cannot direct go after dot", new TokenLocation(line, column, offset));
                         }
                         if (exponentFound) {
@@ -758,12 +764,12 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                         fracOrExp = true;
                         break;
                     case NEGATIVE:
-                        if (writeMark - 2 != mark && buffer[writeMark - 2] != 'e' && buffer[writeMark - 2] != 'E') {
+                        if (writeMark - 2 != mark && buffer[writeMark - 2] != LOWER_EXPONENT && buffer[writeMark - 2] != UPPER_EXPONENT) {
                             throw new JsonParsingException("'-' should be leading sign or go after e/E", new TokenLocation(line, column, offset));
                         }
                         break;
                     case POSITIVE:
-                        if (buffer[writeMark - 2] != 'e' && buffer[writeMark - 2] != 'E') {
+                        if (buffer[writeMark - 2] != LOWER_EXPONENT && buffer[writeMark - 2] != UPPER_EXPONENT) {
                             throw new JsonParsingException("'+' should go after e/E", new TokenLocation(line, column, offset));
                         }
                         break;
@@ -802,7 +808,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                     } else if (buffer.length < maxNumberLength) {
                         moveToHead(Math.min((int) (buffer.length * 1.5), maxNumberLength));
                     } else {
-                        throw new JsonParsingException("number length exceed max size: " + maxNumberLength, new TokenLocation(line, column, offset));
+                        throw new JsonException("number length exceed max size: " + maxNumberLength);
                     }
                 }
             }
