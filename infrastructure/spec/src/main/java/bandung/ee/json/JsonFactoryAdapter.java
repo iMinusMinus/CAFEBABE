@@ -270,6 +270,8 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
 
     static class Contextual {
 
+        protected static final short MAX_DEPTH = Long.SIZE - 1;
+
         protected short depth;
 
         protected long objectContext;
@@ -278,7 +280,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
 
         protected long fieldContext;
 
-        protected long firstKeyFlag = Long.MAX_VALUE;
+        protected long firstKeyFlag = -1L;
 
         protected void startChild(Context context) {
             long value = 1L << depth;
@@ -323,7 +325,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
 
         protected Context currentContext() {
             int move = depth - 1;
-            if (objectContext == 0 && arrayContext == 0 && firstKeyFlag == Long.MAX_VALUE) {
+            if (objectContext == 0 && arrayContext == 0 && firstKeyFlag == -1L) {
                 return Context.NOT_STARTED;
             } else if (((fieldContext >>> (move + 1)) & 1) != 0){
                 return Context.FIELD;
@@ -371,6 +373,8 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
 
         private final Reader reader;
 
+        private /*final*/ short maxNestingDepth; // jackson: 1000
+
         private /*final*/ short maxIdentifierLength; // jackson: 50000
 
         private /*final*/ int maxStringLength; // jackson: 20000000
@@ -414,6 +418,10 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
         }
 
         private void init(Map<String, ?> config) {
+            Number maxNestingDepth = (Number) config.get(JSONP_CONFIG_PREFIX + "parser.maxNestingDepth");
+            this.maxNestingDepth = maxNestingDepth != null && maxNestingDepth.shortValue() > 0 ?
+                    (short) Math.min(maxNestingDepth.shortValue(), MAX_DEPTH) :
+                    MAX_DEPTH;
             Number maxIdentifierLength = (Number) config.get(JSONP_CONFIG_PREFIX + "parser.maxNameLength");
             this.maxIdentifierLength = maxIdentifierLength != null ? (short) Math.max(8, maxIdentifierLength.shortValue()) : (Long.SIZE - 1);
             Integer maxStringLength = (Integer) config.get(JSONP_CONFIG_PREFIX + "parser.maxStringLength");
@@ -491,8 +499,8 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
         @Override
         protected void startChild(Context context) {
             // legal: "{}", "[{}]", "[true, {}]";illegal: "{}[]", "{},{}", "true{}"
-            if (depth >= Long.SIZE - 1) {
-                throw new JsonException("json depth must not exceed 63");
+            if (depth >= maxNestingDepth) {
+                throw new JsonException("json depth must not exceed " + maxNestingDepth);
             }
             super.startChild(context);
         }
@@ -650,6 +658,9 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
         }
 
         private void readString(int maxValueLength) {
+            if (readMoreTokens(buffer.length - readMark) <= 0) {
+                moveToHead(0);
+            }
             int unicodeMarkPosition = -1;
             boolean escape = false;
             while (true) {
@@ -749,7 +760,9 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
         }
 
         private void readNumber() {
-            readMoreTokens(buffer.length - readMark);
+            if (readMoreTokens(buffer.length - readMark) <= 0) {
+                moveToHead(0);
+            }
             boolean exponentFound = false;
             while (true) {
                 switch (buffer[writeMark++]) {
@@ -845,7 +858,9 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
             if (closed) {
                 return false;
             }
-            readMoreTokens(buffer.length - readMark);
+            if (readMoreTokens(buffer.length - readMark) <= 0) {
+                moveToHead(0);
+            }
             skipWhiteSpace();
             if (depth > 0 && writeMark >= readMark) {
                 // currentEvent --> array: next may be 'value', ',value' or ']', or JsonParsingException

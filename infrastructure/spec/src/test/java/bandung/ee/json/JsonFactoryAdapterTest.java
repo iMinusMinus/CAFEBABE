@@ -191,7 +191,8 @@ public class JsonFactoryAdapterTest {
             "{\"oio\":{\"bn\":true,\"na\":null,\"eo\":{},\"ea\":[],\"sn\":\"汉A\",\"on\":{\"nest\":2.7}}, \"aio\":[1,false,\"a😈\",{\"oia\":{\"key\":\"1.23e+45\"}}]}",
             "[ ]", "[\r\n]", "[\t    ]",
             " {    }", "\n{\t}    ", "\n{    \t    \n}\r\n",
-            "true            \r\n        \t", "\t\t\tfalse             \n", "\r\n    null"
+            "true            \r\n        \t", "\t\t\tfalse             \n", "\r\n    null",
+            "{\"hi\":[2,{\"3\":[4,{\"key\":5,\"k\":[6,[7,[8,[9, [10, {\"11\":{\"12\":{\"13\":{\"14\":{\"15\":{\"16\":{\"17\":{\"18\":{\"19\":{\"20\":{\"21\":{\"22\":{\"23\":{\"24\":{\"25\":{\"26\":{\"27\":{\"28\":{\"29\":{\"30\":{\"31\":{\"32\":{\"33\":[34,[35,[36,[37,[38,[39,[40,[41,[42,[43,[44,[45,[46,[47,[48,[49,[50,[51,[52,[53,[54,[55,[56,[57,[58,[59,[60,[61,[62,[63]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}}}}}}}}}}}}}}}}}}}}}}}]]]]]}]}]}"
     })
 //    @EnabledOnJre(value = {JRE.JAVA_8})
     public void testParseJsonStructure(String str) {
@@ -290,6 +291,21 @@ public class JsonFactoryAdapterTest {
         JsonFactoryAdapter adapter = new JsonFactoryAdapter(map);
         javax.json.JsonException e = Assertions.assertThrows(javax.json.JsonException.class, () -> {
             javax.json.stream.JsonParser parser = adapter.createParser(new ByteArrayInputStream("{\"key\":1}".getBytes(StandardCharsets.UTF_8)));
+            while(parser.hasNext()) {
+                parser.next();
+                System.out.println(parser.getValue());
+            }
+        });
+        System.out.println(e.getMessage());
+    }
+
+    @Test
+    public void testTooManyNesting() {
+        Map<String, Integer> map = new HashMap<>();
+        map.put(JsonFactoryAdapter.JSONP_CONFIG_PREFIX + "parser.maxNestingDepth", 3);
+        JsonFactoryAdapter adapter = new JsonFactoryAdapter(map);
+        javax.json.JsonException e = Assertions.assertThrows(javax.json.JsonException.class, () -> {
+            javax.json.stream.JsonParser parser = adapter.createParser(new ByteArrayInputStream("{\"industry\":[[\"bank\", \"insurance\"],[\"种植业\", \"林业\", [\"生猪养殖业\"]]]}".getBytes(StandardCharsets.UTF_8)));
             while(parser.hasNext()) {
                 parser.next();
                 System.out.println(parser.getValue());
