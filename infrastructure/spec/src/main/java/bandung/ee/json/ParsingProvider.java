@@ -46,7 +46,11 @@ public class ParsingProvider extends JsonProvider {
             return adapter;
         }
         Map<String, Object> acceptedConfig = new HashMap<>();
-        config.forEach( (k, v) -> {if (k != null && k.startsWith(JsonFactoryAdapter.JSONP_CONFIG_PREFIX)) {acceptedConfig.put(k, v);}});
+        config.forEach( (k, v) -> {
+            if (JsonGenerator.PRETTY_PRINTING.equals(k) || k.startsWith(JsonFactoryAdapter.JSONP_CONFIG_PREFIX)) {
+                acceptedConfig.put(k, v);
+            }
+        });
         if (acceptedConfig.isEmpty()) {
             return adapter;
         }

@@ -8,4 +8,8 @@ public interface JvmIntrospector {
             System.getProperty("sun.java.launcher.pid",
                     ManagementFactory.getRuntimeMXBean().getName().split("@")[0])
     );
+
+    static boolean isRecord(Class<?> klazz) {
+        return false;
+    }
 }

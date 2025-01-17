@@ -61,6 +61,8 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
 
     static final String JSONP_CONFIG_PREFIX = "jsonp.";
 
+    static final String WRITE_NUMBER_AS_STRING_KEY = JSONP_CONFIG_PREFIX + "generator.writeNumberAsString";
+
     private Map<String, ?> config;
 
     static final char QUOTATION_MARK = '"';
@@ -289,13 +291,13 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                 case OBJECT -> {
                     depth++;
                     objectContext |= value;
-                    firstKeyFlag |= ((Long.MAX_VALUE >>> depth) << depth); // 重制当前json对象内嵌对象的首个元素标记
+                    firstKeyFlag |= ((-1L >>> depth) << depth); // 重制当前json对象内嵌对象的首个元素标记
                     log.log(Level.FINEST, "start {0}th child object context", depth);
                 }
                 case ARRAY -> {
                     depth++;
                     arrayContext |= value;
-                    firstKeyFlag |= ((Long.MAX_VALUE >>> depth) << depth); // 重制当前json对象内嵌对象的首个元素标记
+                    firstKeyFlag |= ((-1L >>> depth) << depth); // 重制当前json对象内嵌对象的首个元素标记
                     log.log(Level.FINEST, "start {0}th child array context", depth);
                 }
                 case FIELD -> fieldContext |= value;
@@ -324,7 +326,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
 
         protected Context currentContext() {
             int move = depth - 1;
-            if (objectContext == 0 && arrayContext == 0 && firstKeyFlag == -1L) {
+            if (objectContext == 0L && arrayContext == 0L && fieldContext == 0L) {
                 return Context.NOT_STARTED;
             } else if (((fieldContext >>> (move + 1)) & 1) != 0){
                 return Context.FIELD;
@@ -513,7 +515,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
 
         private void ensureTopLevelAtMostOneJsonValue(Context context) {
             if (depth == 0 && (context != Context.NOT_STARTED || currentEvent != null)) {
-                throw new JsonParsingException("json value appear multi times in json root", new TokenLocation(line, column, offset));
+                throw new JsonParsingException("json value appear multi times in json root", new TokenLocation(line, column - 1, offset));
             }
         }
 
@@ -535,6 +537,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                     offset++;
                     writeMark++;
                     mark = writeMark;
+                    moveToHead(0);
                     skipWhiteSpace();
                 }
                 if (c == COMMA && (buffer[writeMark] == RIGHT_CURLY_BRACKET || buffer[writeMark] == RIGHT_SQUARE_BRACKET)) {
@@ -611,7 +614,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                     }
                     return Event.VALUE_NUMBER;
                 default:
-                    throw new JsonParsingException("unknown state", new TokenLocation(line, column, offset));
+                    throw new JsonParsingException("unknown state", new TokenLocation(line, column - 1, offset));
             }
         }
 
@@ -632,7 +635,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
             }
             for (int i = 1; i < expected.length; i++) {
                 if (buffer[mark + i] != expected[i]) {
-                    throw new JsonParsingException("expected " + new String(expected) + "but got" + new String(buffer, mark, i), new TokenLocation(line, column + i, offset + i));
+                    throw new JsonParsingException("expected " + new String(expected) + "but got" + new String(buffer, mark, i), new TokenLocation(line, column + i - 1, offset + i));
                 }
             }
             writeMark += expected.length - 1;
@@ -743,7 +746,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                     throw new JsonException("string length exceed max size: " + maxValueLength);
                 }
                 if (writeMark >= readMark) {
-                    if (mark > 0 && readMark < buffer.length) {
+                    if (mark > 0 && readMark <= buffer.length) {
                         moveToHead(0);
                     }  else if (buffer.length < maxValueLength) {
                         moveToHead(Math.min((int) (buffer.length * 1.5), maxValueLength));
@@ -764,26 +767,27 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                     case LOWER_EXPONENT: // pass through
                     case UPPER_EXPONENT: // pass through
                         if (buffer[writeMark - 2] == DOT) {
-                            throw new JsonParsingException("e/E cannot direct go after dot", new TokenLocation(line, column, offset));
+                            throw new JsonParsingException("e/E cannot direct go after dot", getLocation());
                         }
                         if (exponentFound) {
-                            throw new JsonParsingException("e/E cannot appear multi times!", new TokenLocation(line, column, offset));
+                            throw new JsonParsingException("e/E cannot appear multi times!", getLocation());
                         }
                         exponentFound = true;
+                        break;
                     case DOT:
                         if (fracOrExp) {
-                            throw new JsonParsingException("dot/E/e cannot appear multi times", new TokenLocation(line, column, offset));
+                            throw new JsonParsingException("dot/E/e cannot appear multi times", getLocation());
                         }
                         fracOrExp = true;
                         break;
                     case NEGATIVE:
                         if (writeMark - 2 != mark && buffer[writeMark - 2] != LOWER_EXPONENT && buffer[writeMark - 2] != UPPER_EXPONENT) {
-                            throw new JsonParsingException("'-' should be leading sign or go after e/E", new TokenLocation(line, column, offset));
+                            throw new JsonParsingException("'-' should be leading sign or go after e/E", getLocation());
                         }
                         break;
                     case POSITIVE:
                         if (buffer[writeMark - 2] != LOWER_EXPONENT && buffer[writeMark - 2] != UPPER_EXPONENT) {
-                            throw new JsonParsingException("'+' should go after e/E", new TokenLocation(line, column, offset));
+                            throw new JsonParsingException("'+' should go after e/E", getLocation());
                         }
                         break;
                     case '0': // pass through
@@ -806,17 +810,17 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                     case HORIZONTAL_TAB: // WS
                         writeMark -= 1;
                         if (buffer[writeMark - 1] < '0' || buffer[writeMark - 1] > '9') {
-                            throw new JsonParsingException("number should end with 0-9", new TokenLocation(line, column, offset));
+                            throw new JsonParsingException("number should end with 0-9", getLocation());
                         }
                         return;
                     default:
-                        throw new JsonParsingException("valid number characters: -0.1eE+23456789", new TokenLocation(line, column, offset));
+                        throw new JsonParsingException("valid number characters: -0.1eE+23456789", getLocation());
                 }
                 column++;
                 offset++;
 
                 if (writeMark >= readMark) {
-                    if (mark > 0 && readMark < buffer.length) {
+                    if (mark > 0 && readMark <= buffer.length) {
                         moveToHead(0);
                     } else if (buffer.length < maxNumberLength) {
                         moveToHead(Math.min((int) (buffer.length * 1.5), maxNumberLength));
@@ -853,7 +857,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
             skipWhiteSpace();
             if (depth > 0 && writeMark >= readMark) {
                 // currentEvent --> array: next may be 'value', ',value' or ']', or JsonParsingException
-                throw new JsonParsingException(composeExceptionMsg(), new TokenLocation(line, column, offset));
+                throw new JsonParsingException(composeExceptionMsg(), getLocation());
             }
             return writeMark < readMark;
         }
@@ -870,10 +874,14 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
 
         @Override
         public String getString() {
-            if (currentEvent != Event.KEY_NAME && currentEvent != Event.VALUE_STRING && currentEvent != Event.VALUE_NUMBER) {
+            if (currentEvent == Event.KEY_NAME ||
+                    currentEvent == Event.VALUE_STRING) {
+                return new String(buffer, mark + 1, writeMark - 1 - (mark + 1));
+            } else if (currentEvent == Event.VALUE_NUMBER) {
+                return new String(buffer, mark, writeMark - mark);
+            } else {
                 throw new IllegalStateException("please call getString after receive KEY_NAME/VALUE_STRING/VALUE_NUMBER event");
             }
-            return new String(buffer, mark + 1, writeMark - 1 - (mark + 1));
         }
 
         @Override
@@ -922,7 +930,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
             Event event;
             while (hasNext() && (event = next()) != Event.END_OBJECT) {
                 if (event != Event.KEY_NAME) {
-                    throw new JsonParsingException("expect name after '{'", new TokenLocation(line, column, offset));
+                    throw new JsonParsingException("expect name after '{'", getLocation());
                 }
                 String name = getString();
                 next();
@@ -950,7 +958,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                 case END_ARRAY:
                     throw new IllegalStateException("please call getValue in object/array/value context");
                 default:
-                    throw new JsonParsingException("wrong event", new TokenLocation(line, column, offset));
+                    throw new JsonParsingException("wrong event", getLocation());
             }
         }
 
@@ -1048,6 +1056,8 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
 
         private final Writer writer;
 
+        private final Boolean writeNumberAsString;
+
         JsonTokenEmitter(Map<String, ?> config, OutputStream os) {
             this(config, os, StandardCharsets.UTF_8);
         }
@@ -1077,6 +1087,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                 this.prettyPrint = false;
                 this.indentSize = 0;
             }
+            this.writeNumberAsString = (Boolean) config.get(WRITE_NUMBER_AS_STRING_KEY);
             this.writer = writer;
         }
 
@@ -1126,7 +1137,11 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
         }
 
         private void writeComma() {
-            if (currentContext() == Context.FIELD) {
+            writeComma(currentContext());
+        }
+
+        private void writeComma(Context current) {
+            if (current == Context.FIELD) {
                 return;
             }
             if (!isFirstMember()) {
@@ -1134,7 +1149,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
             } else { // 标记后续元素在当前对象不再是首个
                 firstKeyFlag -= (1L << depth); // XXX
             }
-            if (prettyPrint) {
+            if (prettyPrint && current != Context.NOT_STARTED) {
                 writeChar(LINE_FEED);
                 int total = depth * indentSize;
                 for (int i = 0; i < total; i++) {
@@ -1158,8 +1173,8 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
             }
         }
 
-        private void checkContext() {
-            if (currentContext() != Context.OBJECT) {
+        private void checkContext(Context current) {
+            if (current != Context.OBJECT) {
                 throw new JsonGenerationException("please call write(String, T) in json object context");
             }
         }
@@ -1172,7 +1187,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
             } else if (context == Context.NOT_STARTED && !isFirstMember()) { // '[],{}', '{},{}'
                 throw new JsonGenerationException("multi json structure present at root level");
             }
-            writeComma(); // [{},{}]
+            writeComma(context); // [{},{}]
             writeChar(LEFT_CURLY_BRACKET);
             startChild(Context.OBJECT);
             return this;
@@ -1188,10 +1203,11 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
 
         @Override
         public JsonGenerator writeKey(String name) {
-            if (currentContext() != Context.OBJECT) {
+            Context context = currentContext();
+            if (context != Context.OBJECT) {
                 throw new JsonGenerationException("please call writeKey in json object context");
             }
-            writeComma();
+            writeComma(context);
             writeEscapedString(name);
             writeColon();
             startChild(Context.FIELD);
@@ -1213,10 +1229,10 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                         writeChar(REVERSE_SOLIDUS);
                         writeChar(c);
                     }
-                    case SOLIDUS -> {
-                        writeChar(REVERSE_SOLIDUS);
-                        writeChar(SOLIDUS);
-                    }
+//                    case SOLIDUS -> {
+//                        writeChar(REVERSE_SOLIDUS);
+//                        writeChar(SOLIDUS);
+//                    }
                     case BACKSPACE -> {
                         writeChar(REVERSE_SOLIDUS);
                         writeChar('b');
@@ -1239,17 +1255,17 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                     }
                     default -> {
                         assert c >= 0x20; // 0x9, 0xA, 0xD, 0x20 took as white space
-                        if (c <= 0x7F) {
+//                        if (c <= 0x7F) {
                             writeChar(c);
-                        } else {
-                            String hex = "0000" + Integer.toHexString(c);
-                            writeChar(REVERSE_SOLIDUS);
-                            writeChar('u');
-                            writeChar(hex.charAt(hex.length() - 4));
-                            writeChar(hex.charAt(hex.length() - 3));
-                            writeChar(hex.charAt(hex.length() - 2));
-                            writeChar(hex.charAt(hex.length() - 1));
-                        }
+//                        } else {
+//                            String hex = "0000" + Integer.toHexString(c);
+//                            writeChar(REVERSE_SOLIDUS);
+//                            writeChar('u');
+//                            writeChar(hex.charAt(hex.length() - 4));
+//                            writeChar(hex.charAt(hex.length() - 3));
+//                            writeChar(hex.charAt(hex.length() - 2));
+//                            writeChar(hex.charAt(hex.length() - 1));
+//                        }
                     }
                 }
             }
@@ -1266,7 +1282,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
             } else if (context == Context.NOT_STARTED && !isFirstMember()) {
                 throw new JsonGenerationException("multi json structure present at root level");
             }
-            writeComma(); // [[],[]]
+            writeComma(context); // [[],[]]
             writeChar(LEFT_SQUARE_BRACKET);
             startChild(Context.ARRAY);
             return this;
@@ -1286,8 +1302,9 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
 
         @Override
         public JsonGenerator write(String name, String value) {
-            checkContext();
-            writeComma();
+            Context current = currentContext();
+            checkContext(current);
+            writeComma(current);
             writeEscapedString(name);
             writeColon();
             writeEscapedString(value);
@@ -1296,58 +1313,64 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
 
         @Override
         public JsonGenerator write(String name, BigInteger value) {
-            checkContext();
-            writeComma();
+            Context current = currentContext();
+            checkContext(current);
+            writeComma(current);
             writeEscapedString(name);
             writeColon();
-            writeEscapedString(value.toString());
+            writeString(value.toString(), writeNumberAsString(value));
             return this;
         }
 
         @Override
         public JsonGenerator write(String name, BigDecimal value) {
-            checkContext();
-            writeComma();
+            Context current = currentContext();
+            checkContext(current);
+            writeComma(current);
             writeEscapedString(name);
             writeColon();
-            writeEscapedString(value.toString());
+            writeString(value.toString(), writeNumberAsString(value));
             return this;
         }
 
         @Override
         public JsonGenerator write(String name, int value) {
-            checkContext();
-            writeComma();
+            Context current = currentContext();
+            checkContext(current);
+            writeComma(current);
             writeEscapedString(name);
             writeColon();
-            writeEscapedString(String.valueOf(value));
+            writeString(String.valueOf(value), false);
             return this;
         }
 
         @Override
         public JsonGenerator write(String name, long value) {
-            checkContext();
-            writeComma();
+            Context current = currentContext();
+            checkContext(current);
+            writeComma(current);
             writeEscapedString(name);
             writeColon();
-            writeEscapedString(String.valueOf(value));
+            writeString(String.valueOf(value), writeNumberAsString(value));
             return this;
         }
 
         @Override
         public JsonGenerator write(String name, double value) {
-            checkContext();
-            writeComma();
+            Context current = currentContext();
+            checkContext(current);
+            writeComma(current);
             writeEscapedString(name);
             writeColon();
-            writeEscapedString(String.valueOf(value));
+            writeString(String.valueOf(value), writeNumberAsString(value));
             return this;
         }
 
         @Override
         public JsonGenerator write(String name, boolean value) {
-            checkContext();
-            writeComma();
+            Context current = currentContext();
+            checkContext(current);
+            writeComma(current);
             writeEscapedString(name);
             writeColon();
             char[] cs = value ? TRUE : FALSE;
@@ -1359,8 +1382,9 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
 
         @Override
         public JsonGenerator writeNull(String name) {
-            checkContext();
-            writeComma();
+            Context current = currentContext();
+            checkContext(current);
+            writeComma(current);
             writeEscapedString(name);
             writeColon();
             for (char c : NULL) {
@@ -1418,7 +1442,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
             if (ctx == Context.OBJECT) {
                 throw new JsonGenerationException("please call write(String) in root/array/field context");
             }
-            writeComma();
+            writeComma(ctx);
             writeEscapedString(value);
 
             if (ctx == Context.FIELD) {
@@ -1429,25 +1453,41 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
 
         @Override
         public JsonGenerator write(BigDecimal value) {
-            return write(value.toString());
+            writeComma();
+            writeString(String.valueOf(value), writeNumberAsString(value));
+            if (currentContext() == Context.FIELD) {
+                restore();
+            }
+            return this;
         }
 
         @Override
         public JsonGenerator write(BigInteger value) {
-            return write(value.toString());
+            writeComma();
+            writeString(String.valueOf(value), writeNumberAsString(value));
+            if (currentContext() == Context.FIELD) {
+                restore();
+            }
+            return this;
         }
 
         @Override
         public JsonGenerator write(int value) {
             writeComma();
             writeString(String.valueOf(value), false);
+            if (currentContext() == Context.FIELD) {
+                restore();
+            }
             return this;
         }
 
         @Override
         public JsonGenerator write(long value) {
             writeComma();
-            writeString(String.valueOf(value), value > JS_MAX_SAFE_INTEGER || value < JS_MIN_SAFE_INTEGER);
+            writeString(String.valueOf(value), writeNumberAsString(value));
+            if (currentContext() == Context.FIELD) {
+                restore();
+            }
             return this;
         }
 
@@ -1456,7 +1496,12 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
             if (Double.isInfinite(value) || Double.isNaN(value)) {
                 throw new NumberFormatException("cannot write Infinite or NaN");
             }
-            return write(String.valueOf(value));
+            writeComma();
+            writeString(String.valueOf(value), writeNumberAsString(value));
+            if (currentContext() == Context.FIELD) {
+                restore();
+            }
+            return this;
         }
 
         @Override
@@ -1465,7 +1510,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
             if (ctx == Context.OBJECT) {
                 throw new JsonGenerationException("please call write(String) in root/array/field context");
             }
-            writeComma();
+            writeComma(ctx);
             char[] cs = value ? TRUE : FALSE;
             for (char c : cs) {
                 writeChar(c);
@@ -1478,13 +1523,45 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
             return this;
         }
 
+        private boolean writeNumberAsString(long value) {
+            if (writeNumberAsString != null) {
+                return writeNumberAsString;
+            }
+            return value > JS_MAX_SAFE_INTEGER || value < JS_MIN_SAFE_INTEGER;
+        }
+
+        private boolean writeNumberAsString(double value) {
+            if (writeNumberAsString != null) {
+                return writeNumberAsString;
+            }
+            return value > JS_MAX_NUMBER.doubleValue() || value < JS_MIN_NUMBER.doubleValue();
+        }
+
+        private boolean writeNumberAsString(BigInteger value) {
+            if (writeNumberAsString != null) {
+                return writeNumberAsString;
+            }
+            return value.compareTo(JS_MAX_SAFE_NUMBER) > 0  || value.compareTo(JS_MIN_SAFE_NUMBER) < 0;
+        }
+
+        private boolean writeNumberAsString(BigDecimal value) {
+            if (writeNumberAsString != null) {
+                return writeNumberAsString;
+            }
+            if (value.scale() == 0) {
+                return value.compareTo(JS_MAX_SAFE_DECIMAL) > 0  || value.compareTo(JS_MIN_SAFE_DECIMAL) < 0;
+            } else {
+                return value.compareTo(JS_MAX_NUMBER) > 0 || value.compareTo(JS_MIN_NUMBER) < 0;
+            }
+        }
+
         @Override
         public JsonGenerator writeNull() {
             Context ctx = currentContext();
             if (ctx == Context.OBJECT) {
                 throw new JsonGenerationException("please call write(String) in root/array/field context");
             }
-            writeComma();
+            writeComma(ctx);
             for (char c : NULL) {
                 writeChar(c);
             }
@@ -2519,7 +2596,7 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
             for (int i = 0; i < cs.length(); i++) {
                 char c = cs.charAt(i);
                 switch (c) {
-                    case QUOTATION_MARK, SOLIDUS, REVERSE_SOLIDUS -> {
+                    case QUOTATION_MARK, REVERSE_SOLIDUS -> {
                         sb.append(REVERSE_SOLIDUS);
                         sb.append(c);
                     }
@@ -2530,12 +2607,12 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                     case HORIZONTAL_TAB -> sb.append(REVERSE_SOLIDUS).append('t');
                     default -> {
                         assert c >= 0x20; // 0x9, 0xA, 0xD, 0x20 took as white space
-                        if (c <= 0x7F) {
+//                        if (c <= 0x7F) {
                             sb.append(c);
-                        } else {
-                            String hex = "0000" + Integer.toHexString(c);
-                            sb.append(REVERSE_SOLIDUS).append('u').append(hex.substring(hex.length() - 4));
-                        }
+//                        } else {
+//                            String hex = "0000" + Integer.toHexString(c);
+//                            sb.append(REVERSE_SOLIDUS).append('u').append(hex.substring(hex.length() - 4));
+//                        }
                     }
                 }
             }
@@ -2547,4 +2624,16 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
     static final long JS_MAX_SAFE_INTEGER = (1L << 53) - 1;
 
     static final long JS_MIN_SAFE_INTEGER = -JS_MAX_SAFE_INTEGER;
+
+    static final BigDecimal JS_MAX_SAFE_DECIMAL = new BigDecimal(JS_MAX_SAFE_INTEGER);
+
+    static final BigDecimal JS_MIN_SAFE_DECIMAL = JS_MAX_SAFE_DECIMAL.negate();
+
+    static final BigDecimal JS_MAX_NUMBER = new BigDecimal("1.7976931348623157E+308"); // 2 ^ 1024 - 2 ^971
+
+    static final BigDecimal JS_MIN_NUMBER = new BigDecimal("5e-324"); // 2 ^ -1074
+
+    static final BigInteger JS_MAX_SAFE_NUMBER = JS_MAX_SAFE_DECIMAL.toBigInteger();
+
+    static final BigInteger JS_MIN_SAFE_NUMBER = JS_MIN_SAFE_DECIMAL.toBigInteger();
 }

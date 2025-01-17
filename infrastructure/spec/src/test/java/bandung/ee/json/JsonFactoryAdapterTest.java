@@ -212,7 +212,7 @@ public class JsonFactoryAdapterTest {
     @ValueSource(strings = {
             "True", "tr ue", "true1", "true \"str\"",
             "fAlse", "fal\r\nse", "false{}",
-            "null[]", "null:0",
+            "null[]", "null:0", "nul",
             "true, false, null"
     })
 //    @EnabledOnJre(value = {JRE.JAVA_8})
@@ -249,7 +249,7 @@ public class JsonFactoryAdapterTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"\"12qa\"1", "\"Hello World\",\"C\"", "\"str\"true", "\"str\"null", "\"str\"false"})
+    @ValueSource(strings = {"\"12qa\"1", "\"Hello World\",\"C\"", "\"str\"true", "\"str\"null", "\"str\":false"})
 //    @EnabledOnJre(value = {JRE.JAVA_8})
     public void testParseBadJsonString(String badString) {
         JsonFactoryAdapter adapter = new JsonFactoryAdapter(Collections.emptyMap());

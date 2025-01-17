@@ -44,12 +44,21 @@ public class ParsingProvider extends JsonProvider {
         if (config == null || config.isEmpty()) {
             return adapter;
         }
+        Map<String, Object> acceptedConfig = new HashMap<>();
+        config.forEach( (k, v) -> {
+            if (JsonGenerator.PRETTY_PRINTING.equals(k) || k.startsWith(JsonFactoryAdapter.JSONP_CONFIG_PREFIX)) {
+                acceptedConfig.put(k, v);
+            }
+        });
+        if (acceptedConfig.isEmpty()) {
+            return adapter;
+        }
         try {
             JsonFactoryAdapter clone = adapter.clone();
-            clone.setConfig(config);
+            clone.setConfig(acceptedConfig);
             return clone;
         } catch (Exception ignore) {
-            return new JsonFactoryAdapter(config);
+            return new JsonFactoryAdapter(acceptedConfig);
         }
     }
 
