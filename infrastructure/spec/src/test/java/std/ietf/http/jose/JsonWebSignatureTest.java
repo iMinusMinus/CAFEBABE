@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import javax.json.bind.Jsonb;
+import javax.json.bind.JsonbConfig;
 import javax.json.bind.spi.JsonbProvider;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
@@ -18,8 +20,11 @@ public class JsonWebSignatureTest {
 
     @BeforeAll
     protected static void setUp() {
-        deserializer = b -> JsonbProvider.provider("bandung.ee.json.BindingProvider").create().build().fromJson(new ByteArrayInputStream(b), Header.class);
-        jwsJson = json -> JsonbProvider.provider("bandung.ee.json.BindingProvider").create().build().fromJson(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), JsonWebSignature.class);
+        JsonbConfig config = new JsonbConfig();
+        config.withDeserializers(new JsonWebKeyDeserializer());
+        Jsonb jsonb = JsonbProvider.provider("bandung.ee.json.BindingProvider").create().withConfig(config).build();
+        deserializer = b -> jsonb.fromJson(new ByteArrayInputStream(b), Header.class);
+        jwsJson = json -> jsonb.fromJson(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), JsonWebSignature.class);
     }
 
     @Test
