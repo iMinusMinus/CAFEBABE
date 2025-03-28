@@ -8,6 +8,8 @@ import lombok.ToString;
 import java.io.ByteArrayInputStream;
 import java.net.URL;
 import java.security.Key;
+import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
@@ -23,9 +25,10 @@ import java.util.Base64;
 @Setter
 @ToString
 @RequiredArgsConstructor
-public abstract class JsonWebKey<T extends Key> {
+public abstract class JsonWebKey<T extends Key> /* implements Key */ {
 
     public static final String MIME_TYPE = "application/jwk+json";
+    static final String PARAM_KEY_TYPE = "kty";
 
     /**
      * 密钥类型，如RSA、EC
@@ -38,14 +41,19 @@ public abstract class JsonWebKey<T extends Key> {
     protected String use;
 
     /**
-     * 公钥/私钥/对称密钥用途，如sign（消息认证码生成）、verify（验证消息认证码）、encrypt（加密内容）、decrypt（加密内容）、wrapKey（加密密钥）、unwrapKey（解密密钥）、deriveKey（派生密钥）、deriveBits（派生用非密钥数据）
+     * 公钥/私钥/对称密钥用途，如sign（消息认证码生成）、verify（验证消息认证码）、encrypt（加密内容）、decrypt（加密内容）、wrapKey（加密密钥）、unwrapKey（解密密钥）、deriveKey（派生密钥）、deriveBits（派生用非密钥数据）.
      */
-    protected String key_ops;
+    protected String[] key_ops;
 
     /**
      * @see std.ietf.http.jose.JsonWebAlgorithm
      */
     protected String alg;
+
+    /**
+     * 密钥是否可导出
+     */
+    protected boolean ext;
 
     /**
      * 密钥id，如密钥轮换时，从多个密钥中选择一个
@@ -67,11 +75,25 @@ public abstract class JsonWebKey<T extends Key> {
      */
     protected String x5t;
 
-//    protected String x5t#S256;
+    protected String x509Thumbprint; // x5t#S256
 
-    public abstract T asKey();
+    public String getFormat() {
+        return "jwk";
+    }
 
-    public abstract void withKey(T key);
+    public abstract boolean isAsymmetric();
+
+    public abstract T exportKey();
+
+    public PublicKey asPublicKey() {
+        throw new UnsupportedOperationException();
+    }
+
+    public PrivateKey asPrivateKey() {
+        throw new UnsupportedOperationException();
+    }
+
+    public abstract void importKey(T key);
 
     public X509Certificate[] asCertificates() {
         if (x5c == null) {
@@ -86,8 +108,7 @@ public abstract class JsonWebKey<T extends Key> {
             }
             return certificates;
         } catch (CertificateException ce) {
-            ce.printStackTrace();
-            return null;
+            throw new IllegalArgumentException(ce.getMessage(), ce);
         }
     }
 
@@ -95,7 +116,7 @@ public abstract class JsonWebKey<T extends Key> {
         try {
             x5c = new String[certificates.length];
             for (int i = 0; i < certificates.length; i++) {
-                x5c[i] = Base64.getEncoder().encodeToString(certificates[i].getEncoded());
+                x5c[i] = JsonWebToken.ENCODER.encodeToString(certificates[i].getEncoded());
             }
         } catch (CertificateEncodingException cee) {
             cee.printStackTrace();

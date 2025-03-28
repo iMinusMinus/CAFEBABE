@@ -54,40 +54,48 @@ public class JsonWebSignature {
         this.protectedHeader = protectedHeader;
     }
 
+    protected boolean supportCriticalParams(String param) {
+        return false;
+    }
+
     public <T extends Header> JsonWebSignature (T headerParams, Object body, Function<Object, byte[]> serializer, JsonWebKey<?>... keys) throws GeneralSecurityException {
         Header protectedHeader = new Header();
         protectedHeader.setAlg(headerParams.getAlg());
         headerParams.setAlg(null);
         if (headerParams.getCrit() != null && headerParams.getCrit().length > 0) {
-            throw new UnsupportedOperationException("not support crit with values");
+            for (String param : headerParams.getCrit()) {
+                if (!supportCriticalParams(param)) {
+                    throw new UnsupportedOperationException("unsupported crit param: " + param);
+                }
+                protectedHeader.put(param, headerParams.remove(param));
+            }
         }
         byte[] header = serializer.apply(protectedHeader);
         byte[] payload = serializer.apply(body);
-        JsonWebAlgorithm alg = JsonWebAlgorithm.getInstance(protectedHeader.getAlg());
+        JsonWebAlgorithm.JsonWebSignatureAlgorithm alg = JsonWebAlgorithm.getJwsAlgorithm(protectedHeader.getAlg());
         if (alg == null) {
             throw new NoSuchAlgorithmException(protectedHeader.getAlg());
         }
-        JsonWebSignature sig = new JsonWebSignature();
-        sig.setPayload(JsonWebToken.ENCODER.encodeToString(payload));
-        String joseHeader = JsonWebToken.ENCODER.encodeToString(header);
+        this.protectedHeader = JsonWebToken.ENCODER.encodeToString(header);
+        this.payload = JsonWebToken.ENCODER.encodeToString(payload);
+        byte[] signData = String.join(JsonWebToken.PERIOD, this.protectedHeader, this.payload).getBytes(StandardCharsets.US_ASCII);
         if (keys.length <= 1) {
-            sig.setProtected(joseHeader);
-            sig.setHeader(headerParams);
+            this.header = headerParams;
             if (keys.length == 1) {
                 Key key = keys[0].isAsymmetric() ? keys[0].asPrivateKey() : keys[0].exportKey();
-                byte[] signature = alg.sign(String.join(JsonWebToken.PERIOD, sig.getProtected(), sig.getPayload()).getBytes(StandardCharsets.US_ASCII), key);
-                sig.setSignature(JsonWebToken.ENCODER.encodeToString(signature));
+                byte[] signature = alg.sign(signData, key);
+                this.signature = JsonWebToken.ENCODER.encodeToString(signature);
             }
             return;
 
         }
-        Signature[] signatures = new Signature[keys.length];
+        this.signatures = new Signature[keys.length];
         for (int i = 0; i < keys.length; i++) {
             Key key = keys[i].isAsymmetric() ? keys[i].asPrivateKey() : keys[i].exportKey();
-            byte[] signature = alg.sign(String.join(JsonWebToken.PERIOD, sig.getProtected(), sig.getPayload()).getBytes(StandardCharsets.US_ASCII), key);
+            byte[] signature = alg.sign(signData, key);
             signatures[i] = new Signature();
             signatures[i].setSignature(JsonWebToken.ENCODER.encodeToString(signature));
-            signatures[i].setProtected(joseHeader);
+            signatures[i].setProtected(this.protectedHeader);
             Header jwsHeader = new Header();
             jwsHeader.setKid(keys[i].getKid());
             signatures[i].setHeader(jwsHeader);
@@ -113,7 +121,7 @@ public class JsonWebSignature {
             signatures[0].setHeader(header); // may be null
         }
         for (Signature sig : signatures) {
-            if (!verify(sig.getProtected(), payload, sig.getSignature(), sig.getHeader(), deserializer, keys)) {
+            if (!verify(sig.getProtected(), payload, sig.getSignature(), sig.getHeader(), deserializer, keys)) { // all or any?
                 throw new GeneralSecurityException();
             }
         }
@@ -123,7 +131,7 @@ public class JsonWebSignature {
     static <T extends Header> boolean verify(String protectedHeader, String payload, String signature, Header header,
                                              Function<byte[], T> deserializer, JsonWebKey<?>... keys) throws GeneralSecurityException {
         Header joseHeader = deserializer.apply(Base64.getUrlDecoder().decode(protectedHeader));
-        JsonWebAlgorithm alg = JsonWebAlgorithm.getInstance(joseHeader.getAlg());
+        JsonWebAlgorithm.JsonWebSignatureAlgorithm alg = JsonWebAlgorithm.getJwsAlgorithm(joseHeader.getAlg());
         if (alg == null) {
             throw new IllegalArgumentException(joseHeader.getAlg());
         } else if (alg == JsonWebAlgorithm.NONE) {

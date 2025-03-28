@@ -10,9 +10,13 @@ import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.Key;
+import java.security.KeyPair;
 import java.security.SecureRandom;
+import java.security.interfaces.ECPublicKey;
 import java.security.spec.AlgorithmParameterSpec;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.zip.DataFormatException;
@@ -20,7 +24,7 @@ import java.util.zip.Deflater;
 import java.util.zip.Inflater;
 
 /**
- * <a href="https://www.rfc-editor.org/rfc/rfc7516>JSON Web Encryption (JWE)</a>用于加密和解密token，可包含敏感信息
+ * <a href="https://www.rfc-editor.org/rfc/rfc7516">JSON Web Encryption (JWE)</a>用于加密和解密token，可包含敏感信息
  * @author iMinusMinus
  * @date 2025-03-23
  */
@@ -33,11 +37,17 @@ public class JsonWebEncryption {
     private transient boolean frozen;
 
     private String protectedHeader; // base64url
+    /**
+     * 共享的、不计入校验的JOSE头
+     */
     @Getter private Header unprotected; // unencoded JSON object
     /**
      * 加密明文用的初始向量
      */
     @Getter private String iv; // base64url
+    /**
+     * JSON格式，当protected header不存在时，需提供附加认证数据
+     */
     @Getter private String aad; // base64url
     /**
      * 加密明文后的密文（可能包含AAD）
@@ -47,7 +57,6 @@ public class JsonWebEncryption {
 
     @Getter private Recipient[] recipients;
     // Flattened
-    @Getter private Header header; // unencoded JSON object
     /**
      * 对密钥进行加密的密钥
      */
@@ -98,11 +107,6 @@ public class JsonWebEncryption {
         this.recipients = recipients;
     }
 
-    public void setHeader(Header header) {
-        ensureUnfrozen();
-        this.header = header;
-    }
-
     public void setEncrypted_key(String encryptedKey) {
         ensureUnfrozen();
         this.encrypted_key = encryptedKey;
@@ -116,62 +120,124 @@ public class JsonWebEncryption {
         private String encrypted_key; // base64url
     }
 
+    protected boolean supportCompressionAlgorithm(String name) {
+        return ZIP_ALG.equals(name);
+    }
+
+    protected boolean supportCriticalParams(String param) {
+        return Header.PARAM_ZIP.equals(param);
+    }
+
     public <T extends Header> JsonWebEncryption(T headerParams, Object body, Function<Object, byte[]> jsonb, JsonWebKey<?>... keys) throws GeneralSecurityException {
         Header joseHeader = new Header();
-        joseHeader.setAlg(headerParams.getAlg());
-        joseHeader.setEnc(headerParams.getEnc());
-        JsonWebAlgorithm enc = JsonWebAlgorithm.getInstance(joseHeader.getEnc());
+        JsonWebAlgorithm.JsonWebEncryptionAlgorithm enc = JsonWebAlgorithm.getJweAlgorithm(headerParams.getEnc());
         if (enc == null || !enc.support(KeyOperation.ENCRYPT)) {
-            throw new IllegalArgumentException("JWE enc should support encryption, but got " + joseHeader.getEnc());
+            throw new IllegalArgumentException("JWE enc should support encryption, but got " + headerParams.getEnc());
         }
-        headerParams.setAlg(null);
-        if (headerParams.getZip() != null) {
-            joseHeader.setZip(headerParams.getZip());
-            headerParams.setZip(null);
-        }
-        if (headerParams.getCrit() != null && headerParams.getCrit().length > 0) {
-            throw new UnsupportedOperationException();
-        }
-        this.protectedHeader = JsonWebToken.ENCODER.encodeToString(jsonb.apply(joseHeader));
-        this.header = headerParams;
         SecureRandom sr = new SecureRandom();
-        // Generate a random Content Encryption Key (CEK)
-        byte[] rawCek = new byte[256 / 8];
-        sr.nextBytes(rawCek);
-        Key cek = new SecretKeySpec(rawCek, JsonWebAlgorithm.AES_ALGORITHM);
-        // Generate a random JWE Initialization Vector
-        byte[] iv = new byte[16];
-        sr.nextBytes(iv);
-        this.iv = JsonWebToken.ENCODER.encodeToString(iv);
-
-        byte[] payload = body instanceof String ? ((String) body).getBytes(StandardCharsets.UTF_8) : jsonb.apply(body);
-        if (ZIP_ALG.equals(joseHeader.getZip())) {
-            payload = zip(payload);
+        // Key Management Mode: Key Encryption, Key Wrapping, Direct Key Agreement, Key Agreement with Key Wrapping, and Direct Encryption
+        Key cek;
+        ECPublicKey myPublicKey = null;
+        List<JsonWebKey<?>> agreementKeys = new ArrayList<>();
+        for (JsonWebKey<?> k : keys) {
+            JsonWebAlgorithm.JsonWebEncryptionAlgorithm cekAlg = JsonWebAlgorithm.getJweAlgorithm(k.getAlg());
+            if (cekAlg == null) {
+                throw new IllegalArgumentException("no such JWE alg");
+            }
+            if (cekAlg == JsonWebAlgorithm.ECDH_ES) {
+                agreementKeys.add(k);
+            }
         }
-        byte[] aad = this.protectedHeader.getBytes(StandardCharsets.US_ASCII);
+        if (agreementKeys.size() > 1) { // cek仅一个
+            throw new IllegalArgumentException("multiply key agreement found");
+        }
+        byte[] apv = headerParams.getApv() == null ? null : Base64.getUrlDecoder().decode(headerParams.getApv());
+        if (!agreementKeys.isEmpty()) { // Direct Key Agreement(如ECDH-ES) or Key Agreement with Key Wrapping（如ECDH-ES+A28KW）: compute the value of the agreed upon key
+            assert headerParams.getApv() != null;
+            KeyPair keyPair = JsonWebAlgorithm.ECDH_ES.generateKeyPair();
+            myPublicKey = (ECPublicKey) keyPair.getPublic();
+            headerParams.setEpk(new JsonWebKeySet.EllipticCurveJwk(myPublicKey, null));
+            byte[] apu = Optional.ofNullable(headerParams.getApu()).map(x -> Base64.getUrlDecoder().decode(x)).orElse(agreementKeys.get(0).kid.getBytes(StandardCharsets.UTF_8));
+            apv = Base64.getUrlDecoder().decode(headerParams.getApv());
+            Key derived = new SecretKeySpec(JsonWebAlgorithm.ECDH_ES.deriveBits(agreementKeys.get(0).asPublicKey(), keyPair.getPrivate()), JsonWebAlgorithm.AES_ALGORITHM);
+            cek = JsonWebAlgorithm.ECDH_ES.deriveKey(derived, enc, apu, apv);
+        } else { // Key Wrapping, Key Encryption, or Key Agreement with Key Wrapping： Generate a random Content Encryption Key (CEK)
+            byte[] rawCek = new byte[enc.support(KeyOperation.MAC) ? enc.getKeySize() * 2 / 8 : enc.getKeySize() / 8]; // 如果需要拆成mac_key和enc_key，则此处不只是密钥
+            sr.nextBytes(rawCek);
+            cek = new SecretKeySpec(rawCek, JsonWebAlgorithm.AES_ALGORITHM);
+        }
 
         Recipient[] recipients = new Recipient[keys.length];
         for (int i = 0; i < keys.length; i++) {
-            JsonWebAlgorithm recAlg = JsonWebAlgorithm.getInstance(keys[i].getAlg());
-            if (recAlg == null) {
-                throw new IllegalArgumentException(keys[i].getAlg());
-            }
-            JsonWebKey<?> toEncrypt = keys[i];
-            byte[] resolved;
-            if (recAlg.support(KeyOperation.ENCRYPT)) {
-                resolved = recAlg.encrypt(cek.getEncoded(), toEncrypt.isAsymmetric() ? toEncrypt.asPublicKey() : toEncrypt.exportKey(), null, null); // produce the JWE Encrypted Key
-            } else if (recAlg.support(KeyOperation.WRAP_KEY)) {
-                resolved = recAlg.wrapKey(keys[i].exportKey(), cek);
-            } else if (recAlg == JsonWebAlgorithm.DIR) {
-                resolved = null;
-            } else { // derive?
-                throw new IllegalArgumentException();
-            }
+            JsonWebAlgorithm.JsonWebEncryptionAlgorithm cekAlg = JsonWebAlgorithm.getJweAlgorithm(keys[i].getAlg());
             recipients[i] = new Recipient();
             recipients[i].header = new Header();
-            recipients[i].header.setKid(keys[i].kid);
+            recipients[i].header.setKid(keys[i].getKid());
+            recipients[i].header.setAlg(keys[i].getAlg());
+            byte[] resolved; // 密钥长度需要和加密算法一致
+            byte[] apu = null;
+            Key kek = keys[i].isAsymmetric() ? keys[i].asPublicKey() : keys[i].exportKey();
+            if (cekAlg.support(KeyOperation.DERIVE_KEY)) {
+                if (cekAlg instanceof JsonWebAlgorithm.EcFamily) {
+                    apu = Optional.ofNullable(headerParams.getApu()).map(x -> Base64.getUrlDecoder().decode(x))
+                            .orElse(keys[i].getKid().getBytes(StandardCharsets.UTF_8));
+                    kek = ((JsonWebAlgorithm.EcFamily) cekAlg).deriveKey(cek, enc, apu, apv);
+                } else {
+                    kek = ((JsonWebAlgorithm.Pbkdf2Family) cekAlg).deriveKey(Base64.getUrlDecoder().decode(headerParams.getP2s()), headerParams.getP2c());
+                }
+            }
+            if (cekAlg == JsonWebAlgorithm.DIR || cekAlg == JsonWebAlgorithm.ECDH_ES) { // When Direct Encryption is employed, let the CEK be the shared symmetric key; When Direct Key Agreement is employed, let the CEK be the agreed upon key
+                resolved = null; // When Direct Key Agreement or Direct Encryption are employed, let the JWE Encrypted Key be the empty octet sequence
+            } else if (cekAlg.support(KeyOperation.ENCRYPT)) { // Key Wrapping, Key Encryption, or Key Agreement with Key Wrapping are employed, encrypt the CEK to the recipient and let the result be the JWE Encrypted Key
+                byte[] cekAuthTag = jsonb.apply(recipients[i].header);
+                recipients[i].header.setTag(JsonWebToken.ENCODER.encodeToString(cekAuthTag));
+                AlgorithmParameterSpec parameterSpec = cekAlg.newRandomParameter();
+                recipients[i].header.setAlgorithmParameterSpec(parameterSpec);
+                resolved = cekAlg.encrypt(cek.getEncoded(), kek, parameterSpec, cekAuthTag); // produce the JWE Encrypted Key
+            } else if (cekAlg.support(KeyOperation.WRAP_KEY)) { // Key Agreement with Key Wrapping, wrap the CEK with the agreed upon key
+                resolved = cekAlg.wrapKey(kek, cek);
+            } else {
+                throw new IllegalArgumentException();
+            }
+            if (myPublicKey != null) { // ECDH*
+                recipients[i].header.setEpk(new JsonWebKeySet.EllipticCurveJwk(myPublicKey, null));
+                recipients[i].header.setApu(apu != null ? JsonWebToken.ENCODER.encodeToString(apu) : null);
+                recipients[i].header.setApv(headerParams.getApv());
+            }
             recipients[i].encrypted_key = resolved == null ? null : JsonWebToken.ENCODER.encodeToString(resolved);
         }
+        if (recipients.length == 1) {
+            this.encrypted_key = recipients[0].encrypted_key;
+            joseHeader.put(Header.PARAM_ALG, headerParams.remove(Header.PARAM_ALG));
+            joseHeader.put(Header.PARAM_ENC, headerParams.remove(Header.PARAM_ENC));
+            joseHeader.put(Header.PARAM_EPK, headerParams.remove(Header.PARAM_EPK));
+            joseHeader.put(Header.PARAM_APU, headerParams.remove(Header.PARAM_APU));
+            joseHeader.put(Header.PARAM_APV, headerParams.remove(Header.PARAM_APV));
+            joseHeader.put(Header.PARAM_P2S, headerParams.remove(Header.PARAM_P2S));
+            joseHeader.put(Header.PARAM_P2C, headerParams.remove(Header.PARAM_P2C));
+            if (headerParams.getCrit() != null && headerParams.getCrit().length > 0) {
+                for (String param : headerParams.getCrit()) {
+                    if (!supportCriticalParams(param)) {
+                        throw new UnsupportedOperationException();
+                    }
+                    joseHeader.put(param, headerParams.remove(param));
+                }
+            }
+        } else {
+            this.recipients = recipients;
+        }
+        // Generate a random JWE Initialization Vector
+        byte[] iv = new byte[16]; // AES向量长度固定为128 bit
+        sr.nextBytes(iv);
+        this.iv = JsonWebToken.ENCODER.encodeToString(iv);
+        // (compress) plaintext
+        byte[] payload = body instanceof String ? ((String) body).getBytes(StandardCharsets.UTF_8) : jsonb.apply(body);
+        if (supportCompressionAlgorithm(joseHeader.getZip())) {
+            payload = compress(joseHeader.getZip(), payload);
+        }
+        this.unprotected = headerParams;
+        this.protectedHeader = JsonWebToken.ENCODER.encodeToString(jsonb.apply(joseHeader)); // may be empty
+        byte[] aad = this.protectedHeader.getBytes(StandardCharsets.US_ASCII);
         byte[] ciphertext = enc.encrypt(payload, cek, enc.newAlgorithmParameterSpec(aad.length, iv), aad);
         if (enc.support(KeyOperation.MAC)) {
             byte[] authTag = new byte[cek.getEncoded().length / 2];
@@ -190,54 +256,72 @@ public class JsonWebEncryption {
         boolean frozen = this.frozen;
         this.frozen = true;
         T joseHeader = jsonb.apply(Base64.getUrlDecoder().decode(protectedHeader));
-        assert header == null || header.getEnc() == null; // 不受保护的JOSE头不能包含受保护JOSE头内容，包括crit指定的字段不能同时出现
-        if (joseHeader.getZip() != null && !ZIP_ALG.equals(joseHeader.getZip())) {
-            throw new UnsupportedOperationException("supported zip: DEF");
-        }
+        assert unprotected == null || unprotected.getEnc() == null; // 不受保护的JOSE头不能包含受保护JOSE头内容，包括crit指定的字段不能同时出现
         Recipient[] recipients = this.recipients;
         if (this.recipients == null || this.recipients.length == 0) {
             recipients = new Recipient[1];
             recipients[0] = new Recipient();
             recipients[0].encrypted_key = encrypted_key;
-            recipients[0].header = Optional.ofNullable(header).orElse(joseHeader);
+            recipients[0].header = Optional.ofNullable(unprotected).orElse(joseHeader);
         }
+        JsonWebAlgorithm.JsonWebEncryptionAlgorithm enc = JsonWebAlgorithm.getJweAlgorithm(joseHeader.getEnc());
+        if (enc == null) {
+            throw new IllegalArgumentException(joseHeader.getEnc());
+        }
+
         byte[] data = null;
         for (Recipient recipient : recipients) {
             if (recipient.header.getCrit() != null && recipient.header.getCrit().length != 0) {
-                if (!Header.PARAM_ZIP.equals(recipient.header.getCrit()[0])) {
-                    throw new UnsupportedOperationException("supported crit: " + Header.PARAM_ZIP);
+                for (String param : recipient.getHeader().getCrit()) {
+                    if (!supportCriticalParams(param)) {
+                        throw new UnsupportedOperationException("supported crit: " + Header.PARAM_ZIP);
+                    }
                 }
             }
             if (recipient.header.getAlg() == null) {
                 recipient.header.setAlg(joseHeader.getAlg());
             }
-            JsonWebAlgorithm alg = JsonWebAlgorithm.getInstance(recipient.header.getAlg());
+            JsonWebAlgorithm alg = JsonWebAlgorithm.getJweAlgorithm(recipient.header.getAlg());
             if (alg == null) {
                 throw new IllegalArgumentException(recipient.header.getAlg());
             }
-            // 密钥协商：RSA加解密/ECDH加解密、PSK密钥协商（预先共享多个密钥，通讯时通过密钥id协商使用的密钥）
+
+            // 密钥协商：非对称密钥加解密、对称密钥封装、直接密钥协商、协商对称密钥用于加密和封装、共享密钥
             JsonWebKey<?> kek = JsonWebToken.matchJWK(recipient.header, keys);
-            byte[] encryptedKey = Base64.getUrlDecoder().decode(recipient.encrypted_key);
-            byte[] contentEncryptKey;
-            if (alg.support(KeyOperation.DECRYPT)) {
+            byte[] encryptedKey = recipient.encrypted_key != null ? Base64.getUrlDecoder().decode(recipient.encrypted_key) : null;
+            Key cek;
+            Key agreedUponKey = null;
+            if (alg instanceof JsonWebAlgorithm.EcFamily) {
+                if (recipient.header.getEpk() == null || recipient.header.getApu() == null || recipient.header.getApv() == null) {
+                    throw new IllegalArgumentException("epk, apu, apv must not null when alg is ECDH");
+                }
+                byte[] sharedSecret = ((JsonWebAlgorithm.EcFamily) alg).deriveBits(recipient.header.getEpk().asPublicKey(), kek.asPrivateKey());
+                Key derived = new SecretKeySpec(sharedSecret, JsonWebAlgorithm.AES_ALGORITHM);
+                agreedUponKey = ((JsonWebAlgorithm.EcFamily) alg).deriveKey(derived, enc, Base64.getUrlDecoder().decode(recipient.header.getApu()), Base64.getUrlDecoder().decode(recipient.header.getApv()));
+            }
+            Key keyEncryptionKey = kek.isAsymmetric() ? kek.asPrivateKey() : kek.exportKey();
+            if (alg == JsonWebAlgorithm.DIR) { // Direct Encryption
+                assert recipient.encrypted_key == null || recipient.encrypted_key.length() == 0;
+                assert !kek.isAsymmetric();
+                cek = keyEncryptionKey;
+            } else if (alg == JsonWebAlgorithm.ECDH_ES) { // Direct Key Agreement
+                assert recipient.encrypted_key == null || recipient.encrypted_key.length() == 0;
+                cek = agreedUponKey; // When Direct Key Agreement is employed, let the CEK be the agreed upon key
+            } else if (alg.support(KeyOperation.DECRYPT)) { // Key Wrapping, Key Encryption, or Key Agreement with Key Wrapping
                 byte[] cekAAd = aad == null ? null : Base64.getUrlDecoder().decode(aad);
                 byte[] authTag = recipient.header.getTag() == null ? null : Base64.getUrlDecoder().decode(recipient.header.getTag());
-                contentEncryptKey = alg.decrypt(encryptedKey, kek.isAsymmetric() ? kek.asPrivateKey() : kek.exportKey(), recipient.header.getAlgorithmParameterSpec(), cekAAd, authTag);
-            } else if (alg.support(KeyOperation.UNWRAP_KEY)) {
-                contentEncryptKey = alg.unwrapKey(kek.exportKey(), encryptedKey).getEncoded();
+                byte[] contentEncryptKey = alg.decrypt(encryptedKey, keyEncryptionKey, recipient.header.getAlgorithmParameterSpec(), cekAAd, authTag);
+                cek = new SecretKeySpec(contentEncryptKey, JsonWebAlgorithm.AES_ALGORITHM); // JWE内容只支持AES加解密
+            } else if (alg.support(KeyOperation.UNWRAP_KEY)) { // Direct Key Agreement or Key Agreement with Key Wrapping
+                cek = alg.unwrapKey(agreedUponKey != null ? agreedUponKey : keyEncryptionKey, encryptedKey); // When Key Agreement with Key Wrapping is employed, the agreed upon key will be used to decrypt the JWE Encrypted Key
             } else {
-                // alg == JsonWebAlgorithm.DIR
-                contentEncryptKey = encryptedKey;
+                throw new UnsupportedOperationException();
             }
-            JsonWebAlgorithm enc = JsonWebAlgorithm.getInstance(joseHeader.getEnc());
-            if (enc == null) {
-                throw new IllegalArgumentException(joseHeader.getEnc());
-            }
+
             byte[] aad = protectedHeader.getBytes(StandardCharsets.US_ASCII);
             byte[] rawIv = Base64.getUrlDecoder().decode(iv);
             byte[] raw = Base64.getUrlDecoder().decode(ciphertext);
             byte[] authTag = Base64.getUrlDecoder().decode(tag);
-            Key cek = new SecretKeySpec(contentEncryptKey, JsonWebAlgorithm.AES_ALGORITHM); // JWE内容只支持AES加解密
             // JWE内容加密目前只有AES/CBC和AES/GCM两种方式
             AlgorithmParameterSpec spec = enc.newAlgorithmParameterSpec(authTag.length, rawIv);
             try {
@@ -248,10 +332,14 @@ public class JsonWebEncryption {
             }
         }
         this.frozen = frozen;
-        if (data != null && ZIP_ALG.equals(joseHeader.getZip())) {
-            return unzip(data);
+        if (data != null && supportCompressionAlgorithm(joseHeader.getZip())) {
+            return decompress(joseHeader.getZip(), data);
         }
         return data;
+    }
+
+    protected byte[] compress(String name, byte[] data) {
+        return zip(data);
     }
 
     private byte[] zip(byte[] data) {
@@ -263,6 +351,10 @@ public class JsonWebEncryption {
         byte[] raw = new byte[length];
         System.arraycopy(zipped, 0, raw, 0, length);
         return raw;
+    }
+
+    protected byte[] decompress(String name, byte[] zipped) {
+        return unzip(zipped);
     }
 
     private byte[] unzip(byte[] zipped) {

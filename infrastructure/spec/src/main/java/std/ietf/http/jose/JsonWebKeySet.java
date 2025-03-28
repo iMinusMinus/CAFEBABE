@@ -4,12 +4,15 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
 
+import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigInteger;
 import java.security.Key;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.NoSuchAlgorithmException;
+import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
 import java.security.interfaces.RSAMultiPrimePrivateCrtKey;
@@ -42,6 +45,8 @@ import java.util.Optional;
 public class JsonWebKeySet {
 
     public static final String MIME_TYPE = "application/jwk-set+json";
+
+    private static final Base64.Encoder encoder = Base64.getUrlEncoder().withoutPadding(); // JWS使用URL和文件名安全编码：省去结尾可能的"="，无换行、空白等特殊字符
 
     protected JsonWebKey<?>[] keys;
 
@@ -117,43 +122,52 @@ public class JsonWebKeySet {
         }
     }
 
-    @Getter
-    @Setter
     @ToString(callSuper = true)
     public static final class EllipticCurveJwk extends JsonWebKey {
+
+        static final String KEY_TYPE_EC = "EC";
 
         /**
          * Curve
          */
-        private String crv;
+        @Getter @Setter private String crv;
 
         /**
          * X Coordinate
          */
-        private String x;
+        @Getter @Setter private String x;
 
         /**
          * Y Coordinate
          */
-        private String y;
+        @Getter @Setter private String y;
 
         /**
          * ECC Private Key
          */
-        private String d; // private key only
+        @Getter @Setter private String d; // private key only
+
+        private transient volatile ECPublicKey publicKey;
+
+        private transient volatile ECPrivateKey privateKey;
 
         public EllipticCurveJwk() {
             this(null, null);
         }
 
         public EllipticCurveJwk(ECPublicKey publicKey, ECPrivateKey privateKey) {
-            super("EC");
+            super(KEY_TYPE_EC);
             setPublicKey(publicKey);
             setPrivateKey(privateKey);
         }
 
         @Override
-        public Key asKey() {
+        public boolean isAsymmetric() {
+            return true;
+        }
+
+        @Override
+        public Key exportKey() {
             ECParameterSpec parameter = obtainParameter();
             if (parameter == null) {
                 return null;
@@ -162,7 +176,17 @@ public class JsonWebKeySet {
         }
 
         @Override
-        public void withKey(Key key) {
+        public PublicKey asPublicKey() {
+            return getPublicKey();
+        }
+
+        @Override
+        public PrivateKey asPrivateKey() {
+            return getPrivateKey();
+        }
+
+        @Override
+        public void importKey(Key key) {
             if (key instanceof ECPublicKey) {
                 setPublicKey((ECPublicKey) key);
             } else if (key instanceof ECPrivateKey) {
@@ -191,19 +215,23 @@ public class JsonWebKeySet {
         }
 
         ECPublicKey getPublicKey(ECParameterSpec parameter) {
-            ECPoint point = new ECPoint(new BigInteger(1, Base64.getUrlDecoder().decode(x)), new BigInteger(1, Base64.getUrlDecoder().decode(y)));
-            ECPublicKeySpec keySpec = new ECPublicKeySpec(point, parameter);
-            try {
-                return (ECPublicKey) KeyFactory.getInstance(kty).generatePublic(keySpec);
-            } catch (NoSuchAlgorithmException impossible) {
-                impossible.printStackTrace();
-                return null;
-            } catch (InvalidKeySpecException ike) {
-                throw new IllegalArgumentException(ike.getMessage(), ike);
+            if (publicKey == null && x != null && y != null) {
+                ECPoint point = new ECPoint(new BigInteger(1, Base64.getUrlDecoder().decode(x)), new BigInteger(1, Base64.getUrlDecoder().decode(y)));
+                ECPublicKeySpec keySpec = new ECPublicKeySpec(point, parameter);
+                try {
+                    publicKey = (ECPublicKey) KeyFactory.getInstance(kty).generatePublic(keySpec);
+                } catch (NoSuchAlgorithmException impossible) {
+                    impossible.printStackTrace();
+                    return null;
+                } catch (InvalidKeySpecException ike) {
+                    throw new IllegalArgumentException(ike.getMessage(), ike);
+                }
             }
+            return publicKey;
         }
 
         void setPublicKey(ECPublicKey publicKey) {
+            this.publicKey = publicKey;
             if (publicKey == null) {
                 return;
             }
@@ -230,21 +258,22 @@ public class JsonWebKeySet {
         }
 
         ECPrivateKey getPrivateKey(ECParameterSpec parameter) {
-            if (d == null) {
-                return null;
+            if (privateKey == null && d != null) {
+                ECPrivateKeySpec keySpec = new ECPrivateKeySpec(new BigInteger(1, Base64.getUrlDecoder().decode(d)), parameter);
+                try {
+                    privateKey = (ECPrivateKey) KeyFactory.getInstance(kty).generatePrivate(keySpec);
+                } catch (NoSuchAlgorithmException impossible) {
+                    impossible.printStackTrace();
+                    return null;
+                } catch (InvalidKeySpecException ike) {
+                    throw new IllegalArgumentException(ike.getMessage(), ike);
+                }
             }
-            ECPrivateKeySpec keySpec = new ECPrivateKeySpec(new BigInteger(1, Base64.getUrlDecoder().decode(d)), parameter);
-            try {
-                return (ECPrivateKey) KeyFactory.getInstance(kty).generatePrivate(keySpec);
-            } catch (NoSuchAlgorithmException impossible) {
-                impossible.printStackTrace();
-                return null;
-            } catch (InvalidKeySpecException ike) {
-                throw new IllegalArgumentException(ike.getMessage(), ike);
-            }
+            return privateKey;
         }
 
         void setPrivateKey(ECPrivateKey privateKey) {
+            this.privateKey = privateKey;
             if (privateKey == null) {
                 return;
             }
@@ -255,73 +284,92 @@ public class JsonWebKeySet {
 
     }
 
-    @Getter
-    @Setter
     @ToString(callSuper = true)
     public static final class RsaJwk extends JsonWebKey {
+
+        static final String KEY_TYPE_RSA = "RSA";
 
         /**
          * Modulus
          */
-        private String n;
+        @Getter @Setter private String n;
 
         /**
          * Exponent
          */
-        private String e;
+        @Getter @Setter private String e;
 
         /**
          * Private Exponent
          */
-        private String d; // private key only
+        @Getter @Setter private String d; // private key only
 
         /**
          * First Prime Factor
          */
-        private String p; // private key only
+        @Getter @Setter private String p; // private key only
 
         /**
          * Second Prime Factor
          */
-        private String q; // private key only
+        @Getter @Setter private String q; // private key only
 
         /**
          * First Factor CRT Exponent
          */
-        private String dp; // private key only
+        @Getter @Setter private String dp; // private key only
 
         /**
          * Second Factor CRT ExponentSecond Factor CRT Exponent
          */
-        private String dq; // private key only
+        @Getter @Setter private String dq; // private key only
 
         /**
          * First CRT Coefficient
          */
-        private String qi; // private key only
+        @Getter @Setter private String qi; // private key only
 
         /**
          * Other Primes Info
          */
-        private OtherPrimesInfo[] oth;
+        @Getter @Setter private RsaOtherPrimesInfo[] oth;
+
+        private transient volatile RSAPublicKey publicKey;
+
+        private transient volatile RSAPrivateKey privateKey;
 
         public RsaJwk() {
             this(null, null);
         }
 
         public RsaJwk(RSAPublicKey publicKey, RSAPrivateKey privateKey) {
-            super("RSA");
+            super(KEY_TYPE_RSA);
             setPublicKey(publicKey);
             setPrivateKey(privateKey);
         }
 
         @Override
-        public Key asKey() {
+        public boolean isAsymmetric() {
+            return true;
+        }
+
+        @Override
+        public Key exportKey() {
             return d == null ? getPublicKey() : getPrivateKey();
         }
 
         @Override
-        public void withKey(Key key) {
+        public PublicKey asPublicKey() {
+            return getPublicKey();
+        }
+
+        @Override
+        public PrivateKey asPrivateKey() {
+            return getPrivateKey();
+        }
+
+        @Override
+        public void importKey(Key key) {
             if (key instanceof RSAPublicKey) {
                 setPublicKey((RSAPublicKey) key);
             } else if (key instanceof RSAPrivateKey) {
@@ -334,36 +382,45 @@ public class JsonWebKeySet {
         }
 
         RSAPublicKey getPublicKey() {
-            BigInteger modulus = new BigInteger(1, Base64.getUrlDecoder().decode(n));
-            BigInteger exponent = new BigInteger(1, Base64.getUrlDecoder().decode(e));
-            try {
-                return (RSAPublicKey) KeyFactory.getInstance(kty).generatePublic(new RSAPublicKeySpec(modulus, exponent));
-            } catch (NoSuchAlgorithmException impossible) {
-                impossible.printStackTrace();
-                return null;
-            } catch (InvalidKeySpecException ise) {
-                throw new IllegalArgumentException(ise.getMessage(), ise);
+            if (publicKey == null && n != null && e != null) {
+                BigInteger modulus = new BigInteger(1, Base64.getUrlDecoder().decode(n));
+                BigInteger exponent = new BigInteger(1, Base64.getUrlDecoder().decode(e));
+                try {
+                    publicKey = (RSAPublicKey) KeyFactory.getInstance(kty).generatePublic(new RSAPublicKeySpec(modulus, exponent));
+                } catch (NoSuchAlgorithmException impossible) {
+                    impossible.printStackTrace();
+                    return null;
+                } catch (InvalidKeySpecException ise) {
+                    throw new IllegalArgumentException(ise.getMessage(), ise);
+                }
             }
+            return publicKey;
         }
 
         void setPublicKey(RSAPublicKey publicKey) {
+            this.publicKey = publicKey;
             if (publicKey == null) {
                 return;
             }
-            this.n = Base64.getUrlEncoder().encodeToString(toBytesUnsigned(publicKey.getModulus()));
-            this.e = Base64.getUrlEncoder().encodeToString(toBytesUnsigned(publicKey.getPublicExponent()));
+            this.n = encoder.encodeToString(toBytesUnsigned(publicKey.getModulus()));
+            this.e = encoder.encodeToString(toBytesUnsigned(publicKey.getPublicExponent()));
         }
 
         RSAPrivateKey getPrivateKey() {
-            if (d == null) {
+            if (privateKey != null) {
+                return privateKey;
+            }
+            if (n == null || d == null) {
                 return null;
             }
             BigInteger modulus = new BigInteger(1, Base64.getUrlDecoder().decode(n));
             BigInteger privateExponent = new BigInteger(1, Base64.getUrlDecoder().decode(d));
             try {
                 if (p == null) {
-                    return (RSAPrivateKey) KeyFactory.getInstance(kty).generatePrivate(new RSAPrivateKeySpec(modulus, privateExponent));
+                    privateKey = (RSAPrivateKey) KeyFactory.getInstance(kty).generatePrivate(new RSAPrivateKeySpec(modulus, privateExponent));
+                    return privateKey;
                 }
+                assert e != null && q != null && dp != null && dq != null && qi != null;
                 BigInteger publicExponent = new BigInteger(1, Base64.getUrlDecoder().decode(e));
                 BigInteger primeP = new BigInteger(1, Base64.getUrlDecoder().decode(p));
                 BigInteger primeQ = new BigInteger(1, Base64.getUrlDecoder().decode(q));
@@ -382,29 +439,31 @@ public class JsonWebKeySet {
                 } else {
                     keySpec = new RSAPrivateCrtKeySpec(modulus, publicExponent, privateExponent, primeP, primeQ, primeExponentP, primeExponentQ, crtCoefficient);
                 }
-                return (RSAPrivateKey) KeyFactory.getInstance(kty).generatePrivate(keySpec);
+                privateKey = (RSAPrivateKey) KeyFactory.getInstance(kty).generatePrivate(keySpec);
             } catch (NoSuchAlgorithmException impossible) {
                 impossible.printStackTrace();
                 return null;
             } catch (InvalidKeySpecException ise) {
                 throw new IllegalArgumentException(ise.getMessage(), ise);
             }
+            return privateKey;
         }
 
         void setPrivateKey(RSAPrivateKey privateKey) {
+            this.privateKey = privateKey;
             if (privateKey == null) {
                 return;
             }
-            this.n = Base64.getUrlEncoder().encodeToString(toBytesUnsigned(privateKey.getModulus()));
-            this.d = Base64.getUrlEncoder().encodeToString(toBytesUnsigned(privateKey.getPrivateExponent()));
+            this.n = encoder.encodeToString(toBytesUnsigned(privateKey.getModulus()));
+            this.d = encoder.encodeToString(toBytesUnsigned(privateKey.getPrivateExponent()));
             if (privateKey instanceof RSAPrivateCrtKey) {
                 RSAPrivateCrtKey pk = (RSAPrivateCrtKey) privateKey;
-                this.e = Base64.getUrlEncoder().encodeToString(toBytesUnsigned(pk.getPublicExponent()));
-                this.p = Base64.getUrlEncoder().encodeToString(toBytesUnsigned(pk.getPrimeP()));
-                this.q = Base64.getUrlEncoder().encodeToString(toBytesUnsigned(pk.getPrimeQ()));
-                this.dp = Base64.getUrlEncoder().encodeToString(toBytesUnsigned(pk.getPrimeExponentP()));
-                this.dq = Base64.getUrlEncoder().encodeToString(toBytesUnsigned(pk.getPrimeExponentQ()));
-                this.qi = Base64.getUrlEncoder().encodeToString(toBytesUnsigned(pk.getCrtCoefficient()));
+                this.e = encoder.encodeToString(toBytesUnsigned(pk.getPublicExponent()));
+                this.p = encoder.encodeToString(toBytesUnsigned(pk.getPrimeP()));
+                this.q = encoder.encodeToString(toBytesUnsigned(pk.getPrimeQ()));
+                this.dp = encoder.encodeToString(toBytesUnsigned(pk.getPrimeExponentP()));
+                this.dq = encoder.encodeToString(toBytesUnsigned(pk.getPrimeExponentQ()));
+                this.qi = encoder.encodeToString(toBytesUnsigned(pk.getCrtCoefficient()));
             }
             if (privateKey instanceof RSAMultiPrimePrivateCrtKey) {
                 RSAMultiPrimePrivateCrtKey multiPrimeKey = (RSAMultiPrimePrivateCrtKey) privateKey;
@@ -412,11 +471,11 @@ public class JsonWebKeySet {
                 if (primes == null) {
                     return;
                 }
-                oth = new OtherPrimesInfo[primes.length];
+                oth = new RsaOtherPrimesInfo[primes.length];
                 for (int i = 0; i < primes.length; i++) {
-                    oth[i].r = Base64.getUrlEncoder().encodeToString(toBytesUnsigned(primes[i].getPrime()));
-                    oth[i].d = Base64.getUrlEncoder().encodeToString(toBytesUnsigned(primes[i].getExponent()));
-                    oth[i].t = Base64.getUrlEncoder().encodeToString(toBytesUnsigned(primes[i].getCrtCoefficient()));
+                    oth[i].r = encoder.encodeToString(toBytesUnsigned(primes[i].getPrime()));
+                    oth[i].d = encoder.encodeToString(toBytesUnsigned(primes[i].getExponent()));
+                    oth[i].t = encoder.encodeToString(toBytesUnsigned(primes[i].getCrtCoefficient()));
                 }
             }
         }
@@ -425,7 +484,7 @@ public class JsonWebKeySet {
     @Getter
     @Setter
     @ToString
-    public static class OtherPrimesInfo {
+    public static class RsaOtherPrimesInfo {
 
         /**
          * Prime Factor
@@ -443,30 +502,46 @@ public class JsonWebKeySet {
         private String t;
     }
 
-    @Getter
-    @Setter
     @ToString(callSuper = true)
-    public static class SymmetricKey extends JsonWebKey<SecretKeySpec> { // AES, DES, 3DES
+    public static class SymmetricKey extends JsonWebKey<SecretKey> { // AES, DES, 3DES
+
+        static final String KEY_TYPE_OCT = "oct";
 
         /**
          * Key Value
          */
-        private String k;
+        @Getter @Setter private String k;
+
+        private transient volatile SecretKey key;
 
         public SymmetricKey() {
-            super("oct");
+            super(KEY_TYPE_OCT);
         }
 
         @Override
-        public SecretKeySpec asKey() {
-            String algorithm = Optional.ofNullable(JsonWebAlgorithm.getInstance(alg)).map(JsonWebAlgorithm::getAlgorithm).orElse(null);
-            return new SecretKeySpec(Base64.getUrlDecoder().decode(k), algorithm);
+        public boolean isAsymmetric() {
+            return false;
         }
 
         @Override
-        public void withKey(SecretKeySpec key) {
-            this.alg = Optional.ofNullable(JsonWebAlgorithm.getEncryptAlgorithm(key.getAlgorithm())).map(JsonWebAlgorithm::getName).orElse(null);
-            this.k = Base64.getUrlEncoder().encodeToString(key.getEncoded());
+        public SecretKey exportKey() {
+            if (key == null && k != null) {
+                String algorithm = Optional.ofNullable(alg)
+                        .map(JsonWebAlgorithm::getJweAlgorithm).map(JsonWebAlgorithm::getAlgorithm)
+                        .orElse(JsonWebAlgorithm.AES_ALGORITHM);
+                key = new SecretKeySpec(Base64.getUrlDecoder().decode(k), algorithm);
+            }
+            return key;
+        }
+
+        @Override
+        public void importKey(SecretKey key) {
+            assert key != null;
+            this.key = key;
+            this.alg = Optional.ofNullable(JsonWebAlgorithm.jweAlgorithmFrom(key.getAlgorithm(), key.getEncoded().length, 0))
+                    .map(JsonWebAlgorithm::jwaName)
+                    .orElse(null);
+            this.k = encoder.encodeToString(key.getEncoded());
         }
     }
 }

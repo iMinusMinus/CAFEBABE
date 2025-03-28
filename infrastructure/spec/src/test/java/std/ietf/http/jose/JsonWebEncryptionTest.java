@@ -136,5 +136,8 @@ public class JsonWebEncryptionTest {
         k.setAlg(header.getAlg());
         String s = JsonWebToken.toCompactJWE(header, new String (plainText), serializer, k);
         System.out.println(s);
+
+        byte[] p = JsonWebToken.fromCompactJWE(s, deserializer, k);
+        Assertions.assertArrayEquals(plainText, p);
     }
 }
