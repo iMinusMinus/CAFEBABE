@@ -236,6 +236,7 @@ public class JsonWebEncryption {
             payload = compress(joseHeader.getZip(), payload);
         }
         this.unprotected = headerParams;
+        this.unprotected.setTyp("jwt");
         this.protectedHeader = JsonWebToken.ENCODER.encodeToString(jsonb.apply(joseHeader)); // may be empty
         byte[] aad = this.protectedHeader.getBytes(StandardCharsets.US_ASCII);
         byte[] ciphertext = enc.encrypt(payload, cek, enc.newAlgorithmParameterSpec(aad.length, iv), aad);

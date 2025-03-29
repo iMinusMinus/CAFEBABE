@@ -81,6 +81,7 @@ public class JsonWebSignature {
         byte[] signData = String.join(JsonWebToken.PERIOD, this.protectedHeader, this.payload).getBytes(StandardCharsets.US_ASCII);
         if (keys.length <= 1) {
             this.header = headerParams;
+            this.header.setTyp("jose");
             if (keys.length == 1) {
                 Key key = keys[0].isAsymmetric() ? keys[0].asPrivateKey() : keys[0].exportKey();
                 byte[] signature = alg.sign(signData, key);
