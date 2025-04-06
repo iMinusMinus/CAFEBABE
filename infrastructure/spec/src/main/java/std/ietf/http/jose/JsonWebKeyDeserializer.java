@@ -57,11 +57,14 @@ public class JsonWebKeyDeserializer implements JsonbDeserializer<JsonWebKey> {
             throw new JsonbException("unknown JsonWebKey type");
         }
         bean.setAlg(getKey(jsonObject, "alg"));
-        bean.setExt(jsonObject.getBoolean("ext"));
-        bean.setKid(jsonObject.getString("kid"));
-        bean.setUse(jsonObject.getString("use"));
-        bean.setX5t(jsonObject.getString("x5t"));
-        bean.setX509Thumbprint(jsonObject.getString("x5t#S256"));
+        JsonValue ext = jsonObject.get("ext");
+        if (ext != null) {
+            bean.setExt(ext.equals(JsonValue.TRUE));
+        }
+        bean.setKid(jsonObject.getString("kid", null));
+        bean.setUse(jsonObject.getString("use", null));
+        bean.setX5t(jsonObject.getString("x5t", null));
+        bean.setX509Thumbprint(jsonObject.getString("x5t#S256", null));
         JsonArray keyOps = jsonObject.getJsonArray("key_ops");
         if (keyOps != null && keyOps.size() > 0) {
             String[] ops = new String[keyOps.size()];
@@ -78,7 +81,7 @@ public class JsonWebKeyDeserializer implements JsonbDeserializer<JsonWebKey> {
             }
             bean.setX5c(chain);
         }
-        String x5u = jsonObject.getString("x5u");
+        String x5u = jsonObject.getString("x5u", null);
         if (x5u != null) {
             try {
                 bean.setX5u(new URL(x5u));
@@ -91,7 +94,9 @@ public class JsonWebKeyDeserializer implements JsonbDeserializer<JsonWebKey> {
 
     private String getKey(JsonObject jsonObject, String key) {
         JsonValue value = jsonObject.get(key);
-        if (value instanceof JsonString) {
+        if (value == null || value == JsonValue.NULL) {
+            return null;
+        } else if (value instanceof JsonString) {
             return ((JsonString) value).getString();
         } else if (value instanceof JsonArray) {
             JsonArray array = ((JsonArray) value);
