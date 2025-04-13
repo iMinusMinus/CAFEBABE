@@ -95,7 +95,7 @@ public class AuthorizationServerMetadataResponse implements ServerResponse, Seri
     protected List<String> acr_values_supported;
 
     /**
-     * OIDC 支持的主体标识，值为pairwise、public.
+     * OIDC 支持的主体标识，值为pairwise(相同用户给不同客户端不同标识)、public(给所有客户端相同的标识).
      */
     protected List<String> subject_types_supported; // NotNull
 
@@ -183,4 +183,17 @@ public class AuthorizationServerMetadataResponse implements ServerResponse, Seri
      * OIDC 是否需预注册request_uri参数才能使用
      */
     protected boolean require_request_uri_registration;
+
+    /**
+     * <a href="https://www.rfc-editor.org/rfc/rfc9207">OAuth 2.0 Authorization Server Issuer Identification</a>授权码重定向URL是否包含iss参数
+     */
+    protected boolean authorization_response_iss_parameter_supported;
+
+    /**
+     * <a href="https://datatracker.ietf.org/doc/html/draft-parecki-oauth-client-id-scheme">OAuth 2.0 Client ID Scheme</a>定义了生成client_id的语义化：
+     * redirect_uri代表client_id包含客户端重定向URI，openid_federation代表该client_id是一个openid联邦定义的实体id，
+     * decentralized-identifier代表私钥签名的去中心化client_id，client_attestation允许客户端使用公钥验证JWT，
+     * x509_san_dns代表client_id是域名，x509_san_uri代表client_id是URI。
+     */
+    protected List<String> client_id_schemes_supported;
 }

@@ -26,6 +26,10 @@ public class ClientMetadata implements Serializable {
 
     public static final String WEB_APPLICATION_TYPE = "web";
 
+    public static final String DEFAULT_SUBJECT_TYPE = "public";
+
+    public static final String SUBJECT_TYPE_PAIRWISE = "pairwise";
+
     /**
      * 重定向流程使用的URI，比如授权码模式、隐含模式。web应用协议应为https、native应用协议为自定义
      */
@@ -115,7 +119,7 @@ public class ClientMetadata implements Serializable {
     /**
      * 包含多个redirect_uri的文档链接
      */
-    protected URL sector_identifier_uri;
+    protected URI sector_identifier_uri;
 
     /**
      * 要求OP返回的主体类型，值为pairwise和public

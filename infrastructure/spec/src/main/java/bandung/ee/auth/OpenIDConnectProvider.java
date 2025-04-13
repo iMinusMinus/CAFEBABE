@@ -3,7 +3,6 @@ package bandung.ee.auth;
 import bandung.se.IdWorker;
 import bandung.se.Utils;
 import lombok.Getter;
-import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
 import std.ietf.http.jose.Header;
@@ -44,6 +43,7 @@ import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -89,8 +89,6 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
 
     private final Function<Object, byte[]> serializer;
 
-    private final BiFunction<byte[], Class, Object> deserializer;
-
     private final ClientMetadataStore clientMetadataStore;
 
     private final UserService<String, UserInfo> userService;
@@ -108,7 +106,6 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         this.cacheManager = cacheManager;
         this.idWorker = idWorker;
         this.serializer = serializer;
-        this.deserializer = deserializer;
         this.clientMetadataStore = clientMetadataStore;
         this.userService = userService;
         this.clientMetadataDeser = ba -> (ClientMetadata) deserializer.apply(ba, ClientMetadata.class);
@@ -116,21 +113,25 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         this.headerDeser = ba -> (Header) deserializer.apply(ba, Header.class);
     }
 
-    public static final Pattern BEARER_PATTERN = Pattern.compile("^Bearer (?<token>[a-zA-Z0-9-._~+/]+=*)$", 2);
-    public static final Pattern BASIC_PATTERN = Pattern.compile("^Basic (?<token>[a-zA-Z0-9-._~+/]+=*)$", 2);
+    public static final Pattern BEARER_PATTERN = Pattern.compile("^Bearer (?<token>[a-zA-Z0-9-._~+/]+=*)$", Pattern.CASE_INSENSITIVE);
+    public static final Pattern BASIC_PATTERN = Pattern.compile("^Basic (?<token>[a-zA-Z0-9-._~+/]+=*)$", Pattern.CASE_INSENSITIVE);
 
     public static final String REGISTRATION_CACHE_NAME = "oauthRegistration";
-    static final String REGISTRATION_ACCESS_TOKEN_FORMAT = "oauth2:registration:accessToken:%s";
+    static final String REGISTRATION_ACCESS_TOKEN_FORMAT = "oauth2:registration:accessToken:%s"; // Registration Management
     public static final String AUTHORIZATION_CODE_CACHE_NAME = "oauthAuthorizationCode";
-    static final String AUTHORIZATION_FORMAT = "oauth2:authorization:code:%s";
+    public static final String AUTHORIZATION_FORMAT = "oauth2:authorization:code:%s";
     public static final String DEVICE_AUTHORIZATION_CODE_CACHE_NAME = "oauthDeviceAuthorization";
-    static final String DEVICE_AUTHORIZATION_CODE_FORMAT = "oauth2:deviceAuthorization:code:%s:%s";
+    public static final String SUBJECT_CACHE_NAME = "oauthSubject";
+    static final String SUBJECT_FORMAT = "oauth2:authorization:subject:%s:%s"; // UserInfo
+    static final String DEVICE_AUTHORIZATION_CODE_FORMAT = "oauth2:deviceAuthorization:code:%s:%s"; // 应用、设备及用户码，用户扫码或输入用户码后进行比对
     public static final String ACCESS_TOKEN_CACHE_NAME = "oauthAccessToken";
     static final String ACCESS_TOKEN_FORMAT = "oauth2:authorization:accessToken:%s";
     public static final String REFRESH_TOKEN_CACHE_NAME = "oauthRefreshToken";
     static final String REFRESH_TOKEN_FORMAT = "oauth2:authorization:refreshToken:%s";
     public static final String TOKEN_FAILURE_CACHE_NAME = "oauthToken";
-    static final String TOKEN_FAILURE_TIMES_FORMAT = "oauth2:%s:%s";
+    static final String TOKEN_FAILURE_TIMES_FORMAT = "oauth2:%s:%s"; // Audit
+    public static final String TOKEN_CACHE_NAME = "oauthAdditional";
+    public static final String TOKEN_FORMAT = "oauth2:introspection:token:%s";
 
     public static final String RESPONSE_TYPE_ID_TOKEN = "id_token";
 
@@ -161,6 +162,9 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
     }
 
     protected String negotiateItem(String client, List<String> supports) {
+        if (supports == null || supports.isEmpty()) {
+            return null;
+        }
         return client != null && supports.contains(client) ? client : supports.get(0);
     }
 
@@ -176,7 +180,7 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
             byte[] softwareStatement;
             try {
                 softwareStatement = JsonWebToken.fromCompactJWS(request.getSoftware_statement(), headerDeser, request.getJwks().getKeys());
-            } catch (IllegalArgumentException | GeneralSecurityException e) {
+            } catch (IllegalArgumentException | NullPointerException | GeneralSecurityException e) {
                 return new ErrorResponse(ErrorValue.invalid_software_statement.name());
             }
             if (!shouldApprove(softwareStatement)) {
@@ -184,14 +188,27 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
             }
             // client metadata可直接作为请求体，也可以是software_statement的一部分
         }
+        boolean multiHostnameInRedirectUri = false;
+        String hostname = null;
         if (request.getRedirect_uris() != null) {
             for (String uri : request.getRedirect_uris()) {
+                URI u;
                 try {
-                    URI.create(uri);
+                    u = URI.create(uri);
                 } catch (IllegalArgumentException iae) {
                     return new ErrorResponse(ErrorValue.invalid_redirect_uri.name(), uri);
                 }
+                if (hostname == null) {
+                    hostname = u.getHost();
+                } else if (!hostname.equals(u.getHost())) {
+                    multiHostnameInRedirectUri = true;
+                }
             }
+        }
+        if (request.getSector_identifier_uri() == null &&
+                ClientMetadata.SUBJECT_TYPE_PAIRWISE.equals(request.getSubject_type()) &&
+                multiHostnameInRedirectUri) {
+            return new ErrorResponse(ErrorValue.invalid_request.name(), "require sector_identifier_uri when subject_type=pairwise and multi hostnames in registered redirect_uris");
         }
         if (request.getJwks() == null || request.getJwks().getKeys() == null || request.getJwks().getKeys().length == 0) {
             return new ErrorResponse(ErrorValue.invalid_client_metadata.name(), "missing jwk");
@@ -215,7 +232,7 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         token.setToken(negotiateResult.getRegistration_access_token());
         token.setClientId(negotiateResult.getClient_id());
         token.setIssuedAt(Instant.now());
-        cacheManager.getCache(REGISTRATION_CACHE_NAME)
+        cacheManager.getCache(REGISTRATION_CACHE_NAME, String.class, OAuth2Token.class)
                 .put(String.format(REGISTRATION_ACCESS_TOKEN_FORMAT, negotiateResult.getClient_id()), token);
         negotiate(negotiateResult, request);
 
@@ -224,7 +241,7 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
     }
 
     private long estimateClientSecretExpires() {
-        return serverConfig.getClientSecretTtl() == null ?
+        return serverConfig.getClientSecretTtl() != null ?
                 ZonedDateTime.now().plusSeconds(serverConfig.getClientSecretTtl()).toEpochSecond() :
                 ZonedDateTime.now().plusMonths(3).toEpochSecond();
     }
@@ -292,14 +309,14 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         // client_secret、registration_access_token设置了有效期的，可以认证通过后进行刷新
         int nbf = serverConfig.getClientSecretResetNotBefore() != null ? serverConfig.getClientSecretResetNotBefore() : 7 * 24 * 3600;
         if (System.currentTimeMillis() / 1000 - metadata.getClient_secret_expires_at() <= nbf) { // 提前多久允许重新发布密码
-            metadata.setClient_secret(generateChars(false, 16, 16));
+            metadata.setClient_secret(generateChars(false, 8, 16));
             metadata.setClient_secret_expires_at(estimateClientSecretExpires());
             metadata.setRegistration_access_token(generateRegistrationAccessToken());
             OAuth2Token holder = new OAuth2Token();
             holder.setToken(metadata.getRegistration_access_token());
             holder.setIssuedAt(Instant.now());
             holder.setClientId(clientId);
-            cacheManager.getCache(REGISTRATION_CACHE_NAME)
+            cacheManager.getCache(REGISTRATION_CACHE_NAME, String.class, OAuth2Token.class)
                     .put(String.format(REGISTRATION_ACCESS_TOKEN_FORMAT, clientId), holder);
             clientMetadataStore.refreshClientMetadata(metadata);
         }
@@ -334,13 +351,14 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
             return (ErrorResponse) client;
         }
         clientMetadataStore.removeClientMetadata(clientId); // 避免此client_id继续用于授权、获取访问令牌
-        cacheManager.getCache(REGISTRATION_CACHE_NAME).remove(String.format(REGISTRATION_ACCESS_TOKEN_FORMAT, clientId));
+        cacheManager.getCache(REGISTRATION_CACHE_NAME, String.class, OAuth2Token.class)
+                .remove(String.format(REGISTRATION_ACCESS_TOKEN_FORMAT, clientId));
         onDeprovision(clientId); // （可选）将此client_id对应的访问令牌等也失效
         return null;
     }
 
     protected void onDeprovision(String clientId) {
-        cacheManager.getCache(ACCESS_TOKEN_CACHE_NAME).remove(String.format(ACCESS_TOKEN_FORMAT, clientId));
+        // xxx 只有client_id，以access_token为缓存key时，移除access_token不便；以client_id为缓存key时撤销不方便
     }
 
     @Override
@@ -372,6 +390,15 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         }
         int index = ThreadLocalRandom.current().nextInt(serverConfig.getKeys().getKeys().length);
         JsonWebKey<?> key = serverConfig.getKeys().getKeys()[index];
+        Header jose = generateJoseHeader(key);
+        try {
+            return JsonWebToken.toCompactJWS(jose, token, serializer, key);
+        } catch (GeneralSecurityException gse) {
+            throw new RuntimeException(gse.getMessage(), gse);
+        }
+    }
+
+    private Header generateJoseHeader(JsonWebKey<?> key) {
         Header jose = new Header();
         if (key instanceof JsonWebKeySet.EllipticCurveJwk) {
             jose.setAlg(JsonWebAlgorithm.ES256.jwaName());
@@ -381,11 +408,7 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
             jose.setAlg(JsonWebAlgorithm.HS256.jwaName());
         }
         jose.setKid(key.getKid());
-        try {
-            return JsonWebToken.toCompactJWS(jose, token, serializer, key);
-        } catch (GeneralSecurityException gse) {
-            throw new RuntimeException(gse.getMessage(), gse);
-        }
+        return jose;
     }
 
     /**
@@ -409,21 +432,43 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         return true;
     }
 
-    protected OAuth2Token generateAccessToken() {
-        String accessToken = "at." + generateChars(true, 13, 29);
-        String jws =  generateToken(accessToken);
-        OAuth2Token token = new OAuth2Token();
-        token.setToken(jws);
-        token.setIssuedAt(Instant.now());
-        token.setExpiresAt(Instant.now().plusSeconds(serverConfig.getAccessTokenTtl()));
-        return token;
-    }
-
-    protected boolean verifyAccessToken(String accessToken) {
-        if (serverConfig.getKeys() != null && serverConfig.getKeys().getKeys().length > 0) {
-            return verifyToken(accessToken);
+    protected OAuth2Token generateAccessToken(String clientId, UserInfo user, Object audience, String scope) { // b64token
+        Instant iat = Instant.now();
+        Instant exp = Instant.now().plusSeconds(serverConfig.getAccessTokenTtl());
+        String subject = Optional.ofNullable(user).map(UserInfo::getSub).orElse(null);
+        String accessToken;
+        if (subject != null && serverConfig.getKeys() != null && serverConfig.getKeys().getKeys() != null) {
+            byte[] ubga = new byte[8];
+            long id = idWorker.getId();
+            for (int i = ubga.length - 1; i > 0; i--) {
+                ubga[i] = (byte) (id % 256);
+                id /= 256;
+            }
+            JwtAccessToken at = new JwtAccessToken(serverConfig.getIssuer(), exp, audience, subject, clientId, iat, JsonWebToken.ENCODER.encodeToString(ubga));
+            at.setScope(scope);
+//            at.setRoles();
+//            at.setGroups();
+//            at.setEntitlements();
+            int index = ThreadLocalRandom.current().nextInt(serverConfig.getKeys().getKeys().length);
+            JsonWebKey key = serverConfig.getKeys().getKeys()[index];
+            Header jose = generateJoseHeader(key);
+            jose.setTyp("at+JWT");
+            try {
+                accessToken = JsonWebToken.toCompactJWS(jose, at, serializer, key);
+            } catch (GeneralSecurityException gse) {
+                throw new RuntimeException(gse.getMessage(), gse);
+            }
+        } else {
+            String mix = generateChars(true, 13, 29);
+            accessToken = "at." + Base64.getEncoder().encodeToString(mix.getBytes(StandardCharsets.UTF_8));
         }
-        return true;
+        OAuth2Token token = new OAuth2Token();
+        token.setToken(accessToken);
+        token.setSubject(subject);
+        token.setIssuedAt(iat);
+        token.setExpiresAt(exp);
+        token.setTokenType(serverConfig.getTokenType());
+        return token;
     }
 
     protected OAuth2Token generateRefreshToken() {
@@ -488,10 +533,10 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         }
         OAuth2Token token = new OAuth2Token();
         token.setToken(userCode);
-        token.setChallenge(userCode);
         token.setClientId(request.getClientId());
         token.setIssuedAt(Instant.now());
         token.setExpiresAt(Instant.now().plusSeconds(serverConfig.getDeviceCodeTtl()));
+        token.setVirgin(true);
         cacheManager.getCache(DEVICE_AUTHORIZATION_CODE_CACHE_NAME, String.class, OAuth2Token.class)
                 .put(String.format(DEVICE_AUTHORIZATION_CODE_FORMAT, request.getClientId(), deviceCode), token);
         return response;
@@ -507,22 +552,22 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
             }
             OpenIDConnectAuthorizationRequest jws = authorizationReqDeser.apply(payload);
             if (jws.getClientId() != null && req.getClientId() != null && !jws.getClientId().equals(req.getClientId())) {
-                throw new ErrorValueException(new ErrorResponse(ErrorValue.invalid_request.name(), "inconsistent param: client_id"));
+                throw new IllegalArgumentException("inconsistent param: client_id");
             }
             if (jws.getResponseType() != null && req.getResponseType() != null && !jws.getResponseType().equals(req.getResponseType())) {
-                throw new ErrorValueException(new ErrorResponse(ErrorValue.invalid_request.name(), "inconsistent param: response_type"));
+                throw new IllegalArgumentException("inconsistent param: response_type");
             }
             if (jws.getRedirectUri() != null && req.getRedirectUri() != null && !jws.getRedirectUri().equals(req.getRedirectUri())) {
-                throw new ErrorValueException(new ErrorResponse(ErrorValue.invalid_request.name(), "inconsistent param: redirect_uri"));
+                throw new IllegalArgumentException("inconsistent param: redirect_uri");
             }
             if (jws.getScope() != null && req.getScope() != null && !jws.getScope().equals(req.getScope())) {
-                throw new ErrorValueException(new ErrorResponse(ErrorValue.invalid_request.name(), "inconsistent param: scope"));
+                throw new IllegalArgumentException("inconsistent param: scope");
             }
             if (jws.getState() != null && req.getState() != null && !jws.getState().equals(req.getState())) {
-                throw new ErrorValueException(new ErrorResponse(ErrorValue.invalid_request.name(), "inconsistent param: state"));
+                throw new IllegalArgumentException("inconsistent param: state");
             }
             if (jws.getResponseMode() != null && req.getResponseMode() != null && !jws.getResponseMode().equals(req.getResponseMode())) {
-                throw new ErrorValueException(new ErrorResponse(ErrorValue.invalid_request.name(), "inconsistent param: response_mode"));
+                throw new IllegalArgumentException("inconsistent param: response_mode");
             }
             if (jws.getMaxAge() != null) {
                 req.setMaxAge(jws.getMaxAge());
@@ -531,92 +576,126 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
                 req.setClaims(jws.getClaims());
             }
         }
-        if (req.getRequestUri() != null) { // 暂不支持
-            throw new ErrorValueException(new ErrorResponse(ErrorValue.request_uri_not_supported.name()));
-        }
     }
 
     @Override
     public ServerResponse authorize(Authorization.Request request) {
-        boolean fragment = request instanceof OpenIDConnectAuthorizationRequest &&
-                ResponseMode.FRAGMENT.name().toLowerCase().equals(((OpenIDConnectAuthorizationRequest) request).getResponseMode());
         if (request.getResponseType() == null) { // device authorization
             return deviceAuthorize(request);
         }
-        String location;
         try {
             ServerResponse maybeError = validateAuthorizeParam(request);
-            Registration.InformationResponse clientInfo;
-            if (maybeError.isSuccess()) {
-                clientInfo = (Registration.InformationResponse) maybeError;
-            } else {
-                throw new ErrorValueException((ErrorResponse) maybeError);
+            if (!maybeError.isSuccess()) {
+                return maybeError;
             }
+            Registration.InformationResponse clientInfo = (Registration.InformationResponse) maybeError;
             if (request.getRedirectUri() != null) {
                 try {
                     new URL(request.getRedirectUri());
                 } catch (MalformedURLException e) {
-                    throw new ErrorValueException(new ErrorResponse(ErrorValue.invalid_request.name(), "malformed redirect_uri"));
+                    return new ErrorResponse(ErrorValue.invalid_request.name(), "malformed redirect_uri");
                 }
                 if (!clientInfo.getRedirect_uris().isEmpty() && !clientInfo.getRedirect_uris().contains(request.getRedirectUri())) {
-                    throw new ErrorValueException(new ErrorResponse(ErrorValue.invalid_redirect_uri.name(), "unregistered redirect_uri"));
+                    return new ErrorResponse(ErrorValue.invalid_redirect_uri.name(), "unregistered redirect_uri");
                 }
             }
             List<String> responseTypes = Arrays.asList(request.getResponseType().split(SEPARATOR));
             if (!serverConfig.getResponse_types_supported().containsAll(responseTypes)) {
-                throw new ErrorValueException(new ErrorResponse(ErrorValue.unsupported_response_type.name()));
+                return new ErrorResponse(ErrorValue.unsupported_response_type.name());
             }
             if (serverConfig.isForcePKCE() && request.getClientSecret() == null && request.getCodeChallenge() == null) { // 非机密客户端使用PKCE能够增强安全性
-                throw new ErrorValueException(new ErrorResponse(ErrorValue.invalid_request.name(), "require PKCE for public client"));
+                return new ErrorResponse(ErrorValue.invalid_request.name(), "require PKCE for public client");
             }
             if (request.getCodeChallengeMethod() != null &&
                     !serverConfig.getCode_challenge_methods_supported().contains(request.getCodeChallengeMethod())) {
-                throw new ErrorValueException(new ErrorResponse(ErrorValue.invalid_request.name(), "invalid code_challenge_method value"));
-            }
-            if (shouldDeny(request)) {
-                throw new ErrorValueException(new ErrorResponse(ErrorValue.access_denied.name()));
+                return new ErrorResponse(ErrorValue.invalid_request.name(), "invalid code_challenge_method value");
             }
             if (request instanceof OpenIDConnectAuthorizationRequest) {
                 OpenIDConnectAuthorizationRequest req = (OpenIDConnectAuthorizationRequest) request;
                 mergeRequest(clientInfo, req);
+                if (req.getRequestUri() != null) { // 暂不支持
+                    return new ErrorResponse(ErrorValue.request_uri_not_supported.name());
+                }
                 if (req.getRegistration() != null) { // 暂不支持
-                    throw new ErrorValueException(new ErrorResponse(ErrorValue.registration_not_supported.name()));
+                    return new ErrorResponse(ErrorValue.registration_not_supported.name());
                 }
                 if (req.getPrompt() != null &&
                         req.getPrompt().contains(PROMPT_TYPE_NONE) && req.getPrompt().length() > PROMPT_TYPE_NONE.length()) { // 含有none及其他类型
-                    throw new ErrorValueException(new ErrorResponse(ErrorValue.invalid_request.name()));
+                    return new ErrorResponse(ErrorValue.invalid_request.name(), "prompt cannot have none and others");
                 }
             }
-            Authorization.TokenResponse response;
+            // xxx 将请求与session进行绑定
+            return null;
+        } catch (IllegalArgumentException iae) {
+            return new ErrorResponse(ErrorValue.invalid_request.name());
+        } catch (RuntimeException re) {
+            log.log(Level.WARNING, re.getMessage(), re);
+            return new ErrorResponse(ErrorValue.temporarily_unavailable.name());
+        } catch (Exception e) {
+            log.log(Level.WARNING, e.getMessage(), e);
+            return new ErrorResponse(ErrorValue.server_error.name());
+        }
+    }
 
-            OAuth2Token code = null;
-            if (responseTypes.contains(Authorization.PARAM_CODE)) { // 授权码模式或OIDC混合模式
-                String authorizationCode = generateAuthorizationCode();
-                code = new OAuth2Token();
-                code.setToken(authorizationCode);
-                code.setChallenge(request.getCodeChallenge());
-                code.setChallengeType(request.getCodeChallengeMethod());
-                code.setRedirectUri(request.getRedirectUri());
-                code.setIssuedAt(Instant.now());
-                code.setVirgin(true);
-                cacheManager.getCache(AUTHORIZATION_CODE_CACHE_NAME, String.class, OAuth2Token.class)
-                        .put(String.format(AUTHORIZATION_FORMAT, authorizationCode), code); // 授权码与{client_id, redirect_uri}绑定
-            }
-            boolean implicit = responseTypes.contains(GrantType.IMPLICIT.getValue());
-            boolean idToken = responseTypes.contains(RESPONSE_TYPE_ID_TOKEN);
-            OAuth2Token accessToken = null;
-            if (implicit || idToken) {
-                accessToken = generateAccessToken();
-                cacheManager.getCache(ACCESS_TOKEN_CACHE_NAME, String.class, OAuth2Token.class)
-                        .put(String.format(ACCESS_TOKEN_FORMAT, accessToken.getToken()), accessToken); // XXX 访问令牌与???绑定
-            }
-            if (idToken) { // OIDC扩展的隐含模式、OIDC混合模式
-                response = new OpenIDConnectProvider.IDTokenResponse(accessToken.getToken(), serverConfig.getTokenType(), generateIDToken(request, code, accessToken, clientInfo));
-                ((OpenIDConnectProvider.IDTokenResponse) response).setCode(code.getToken());
-            } else if (implicit) { // 隐含模式
+    public void onDeviceAuthorizeCallback(String clientId, String deviceCode, String userCode, UserInfo userInfo) { // 设备授权码模式：client_id, device_code, user_code
+        Registration.InformationResponse clientInfo = clientMetadataStore.loadClientMetadata(clientId);
+        if (clientInfo == null) {
+            return; // may be revoked
+        }
+        Cache<String, OAuth2Token> cache = cacheManager.getCache(DEVICE_AUTHORIZATION_CODE_CACHE_NAME, String.class, OAuth2Token.class);
+        OAuth2Token token = cache.get(String.format(DEVICE_AUTHORIZATION_CODE_FORMAT, clientId, deviceCode));
+        if (token != null && token.getToken().equals(userCode) && token.virgin) {
+            token.setVirgin(false);
+            cache.put(String.format(DEVICE_AUTHORIZATION_CODE_FORMAT, clientId, deviceCode), token);
+
+            cacheManager.getCache(SUBJECT_CACHE_NAME, String.class, UserInfo.class)
+                    .put(String.format(SUBJECT_FORMAT, clientId, deviceCode), userInfo);
+        }
+    }
+
+    /**
+     * 授权回调
+     * @param request 原始授权请求
+     * @param authTime 授权请求时间
+     * @param accessDenied 用户是否同意
+     * @param userInfo 授权的用户信息
+     * @return
+     */
+    public ServerResponse onAuthorizeCallback(Authorization.Request request, long authTime, boolean accessDenied, UserInfo userInfo) {
+        boolean fragment = request instanceof OpenIDConnectAuthorizationRequest &&
+                ResponseMode.FRAGMENT.name().toLowerCase().equals(((OpenIDConnectAuthorizationRequest) request).getResponseMode());
+        // 用户拒绝
+        if (accessDenied) {
+            return new RedirectResponse(build(false, request, fragment, serverConfig, null, null, new ErrorResponse(ErrorValue.access_denied.name())));
+        }
+        Registration.InformationResponse clientInfo = clientMetadataStore.loadClientMetadata(request.getClientId());
+        if (clientInfo == null) {
+            return new ErrorResponse(ErrorValue.invalid_client_metadata.name()); // may be revoked
+        }
+        List<String> responseTypes = Arrays.asList(request.getResponseType().split(SEPARATOR));
+        // 用户同意授权
+        String location;
+        String authorizationCode = null;
+        if (responseTypes.contains(GrantType.AUTHORIZATION_CODE.getValue())) { // 授权码模式或OIDC混合模式
+            authorizationCode = generateAuthorizationCode();
+            cacheManager.getCache(AUTHORIZATION_CODE_CACHE_NAME, String.class, Authorization.Request.class)
+                    .put(String.format(AUTHORIZATION_FORMAT, authorizationCode), request); // 授权码与{client_id, redirect_uri}绑定
+            cacheManager.getCache(SUBJECT_CACHE_NAME, String.class, UserInfo.class)
+                    .put(String.format(SUBJECT_FORMAT, request.getClientId(), authorizationCode), userInfo);
+        }
+        OAuth2Token accessToken;
+        boolean hybridImplicit = responseTypes.equals(Arrays.asList(GrantType.IMPLICIT.getValue(), RESPONSE_TYPE_ID_TOKEN)); // id_token token
+        boolean implicit = GrantType.IMPLICIT.getValue().equals(request.getResponseType()); // token
+        Authorization.TokenResponse response = null;
+        if (implicit || hybridImplicit) { // 隐含模式、OIDC扩展的隐含模式
+            accessToken = generateAccessToken(request.getClientId(), userInfo, findAudiences(request.getScope()), request.getScope());
+            cacheManager.getCache(ACCESS_TOKEN_CACHE_NAME, String.class, OAuth2Token.class)
+                    .put(String.format(ACCESS_TOKEN_FORMAT, accessToken.getToken()), accessToken); // XXX 访问令牌与???绑定
+            if (hybridImplicit) {
+                String idToken = generateIDToken(request, authTime, userInfo, authorizationCode, accessToken, clientInfo);
+                response = new IDTokenResponse(accessToken.getToken(), serverConfig.getTokenType(), idToken);
+            } else {
                 response = new Authorization.TokenResponse(accessToken.getToken(), serverConfig.getTokenType());
-            } else { // 授权码模式
-                return new RedirectResponse(build(true, request, fragment, code.getToken(), null, null));
             }
             response.setExpires_in((int) serverConfig.getAuthorizationCodeTtl().getSeconds()); // 相对时间
             if (serverConfig.getRefreshTokenTtl() != null) {
@@ -627,22 +706,13 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
                         .put(String.format(REFRESH_TOKEN_FORMAT, refreshToken.getToken()), refreshToken); // XXX 刷新令牌与???绑定
                 response.setRefresh_token(refreshToken.getToken());
             }
-            location = build(true, request, fragment, Optional.ofNullable(code).map(OAuth2Token::getToken).orElse(null), response, null);
-        } catch (IllegalArgumentException iae) {
-            location = build(false, request, fragment, null, null, new ErrorResponse(ErrorValue.invalid_request.name()));
-        } catch (ErrorValueException eve) {
-            location = build(false, request, fragment, null, null, eve.getError());
-        } catch (RuntimeException re) {
-            log.log(Level.WARNING, re.getMessage(), re);
-            location = build(false, request, fragment, null, null, new ErrorResponse(ErrorValue.temporarily_unavailable.name()));
-        } catch (Exception e) {
-            log.log(Level.WARNING, e.getMessage(), e);
-            location = build(false, request, fragment, null, null, new ErrorResponse(ErrorValue.server_error.name()));
-        }
+        } // 授权码模式(code)、OIDC混合模式(code id_token, code token, code token id_token)
+        location = build(true, request, fragment, serverConfig, authorizationCode, response, null);
         return new RedirectResponse(location);
     }
 
-    protected String generateIDToken(Authorization.Request request, OAuth2Token code, OAuth2Token accessToken, Registration.InformationResponse clientMetadata) throws GeneralSecurityException {
+    protected String generateIDToken(Authorization.Request request, long authTime, UserInfo userInfo,
+                                     String authorizationCode, OAuth2Token accessToken, Registration.InformationResponse clientMetadata) {
         //header
         Header joseHeader = new Header();
         boolean jwt = false;
@@ -655,83 +725,105 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         }
 
         // payload
-        UserInfo userInfo = userService.loadUser(code.getToken());
         long expiresAt = Optional.ofNullable(accessToken.getExpiresAt()).map(Instant::getEpochSecond).orElse(0L);
-        IDToken idToken = new IDToken(serverConfig.getIssuer(), userInfo.getSub(), request.getClientId(), (int) expiresAt, (int) accessToken.getIssuedAt().getEpochSecond());
+        String subject = null;
+        if(ClientMetadata.DEFAULT_SUBJECT_TYPE.equals(clientMetadata.getSubject_type())) {
+            subject = userInfo.getSub();
+        } else { // 1. SHA-256(sector_identifier_uri + local_account_id + salt); 2. AES-128(sector_identifier_uri + local_account_id + salt); 3. GUID
+            String ppid = Optional.ofNullable(clientMetadata.getSector_identifier_uri()).map(URI::toString)
+                    .orElse(URI.create(clientMetadata.getRedirect_uris().get(0)).getHost()) + userInfo.getSub() + clientMetadata.getClient_id();
+            try {
+                byte[] data = JsonWebAlgorithm.HS256.digest(ppid.getBytes(StandardCharsets.UTF_8));
+                subject = JsonWebToken.ENCODER.encodeToString(data);
+            } catch (GeneralSecurityException ignore) {
+            }
+        }
+        IDToken idToken = new IDToken(serverConfig.getIssuer(), subject, request.getClientId(), (int) expiresAt, (int) accessToken.getIssuedAt().getEpochSecond());
         if (clientMetadata.isRequire_auth_time()) {
-            idToken.setAuth_time(code.getIssuedAt().getEpochSecond());
+            idToken.setAuth_time(authTime / 1000);
         }
-        if (request.getScope().contains(SCOPE_PROFILE)) {
-            idToken.setName(userInfo.getName());
-            idToken.setFamily_name(userInfo.getFamily_name());
-            idToken.setGiven_name(userInfo.getGiven_name());
-            idToken.setMiddle_name(userInfo.getMiddle_name());
-            idToken.setNickname(userInfo.getNickname());
-            idToken.setPreferred_username(userInfo.getPreferred_username());
-            idToken.setProfile(userInfo.getProfile());
-            idToken.setPicture(userInfo.getPicture());
-            idToken.setWebsite(userInfo.getWebsite());
-            idToken.setGender(userInfo.getGender());
-            idToken.setBirthdate(userInfo.getBirthdate());
-            idToken.setZoneinfo(userInfo.getZoneinfo());
-            idToken.setLocale(userInfo.getLocale());
-            idToken.setUpdated_at(userInfo.getUpdated_at());
-        }
-        if (request.getScope().contains(SCOPE_EMAIL)) {
-            idToken.setEmail(userInfo.getEmail());
-            idToken.setEmail_verified(userInfo.getEmail_verified());
-        }
-        if (request.getScope().contains(SCOPE_PHONE)) {
-            idToken.setPhone_number(userInfo.getPhone_number());
-            idToken.setPhone_number_verified(userInfo.getPhone_number_verified());
-        }
-        if (request.getScope().contains(SCOPE_ADDRESS)) {
-            idToken.setAddress(userInfo.getAddress());
+        if (userInfo != null) {
+            if (request.getScope().contains(SCOPE_PROFILE)) { // xxx 服务端是否授权???
+                idToken.setName(userInfo.getName());
+                idToken.setFamily_name(userInfo.getFamily_name());
+                idToken.setGiven_name(userInfo.getGiven_name());
+                idToken.setMiddle_name(userInfo.getMiddle_name());
+                idToken.setNickname(userInfo.getNickname());
+                idToken.setPreferred_username(userInfo.getPreferred_username());
+                idToken.setProfile(userInfo.getProfile());
+                idToken.setPicture(userInfo.getPicture());
+                idToken.setWebsite(userInfo.getWebsite());
+                idToken.setGender(userInfo.getGender());
+                idToken.setBirthdate(userInfo.getBirthdate());
+                idToken.setZoneinfo(userInfo.getZoneinfo());
+                idToken.setLocale(userInfo.getLocale());
+                idToken.setUpdated_at(userInfo.getUpdated_at());
+            }
+            if (request.getScope().contains(SCOPE_EMAIL)) {
+                idToken.setEmail(userInfo.getEmail());
+                idToken.setEmail_verified(userInfo.getEmail_verified());
+            }
+            if (request.getScope().contains(SCOPE_PHONE)) {
+                idToken.setPhone_number(userInfo.getPhone_number());
+                idToken.setPhone_number_verified(userInfo.getPhone_number_verified());
+            }
+            if (request.getScope().contains(SCOPE_ADDRESS)) {
+                idToken.setAddress(userInfo.getAddress());
+            }
         }
         if (request instanceof OpenIDConnectAuthorizationRequest) {
             OpenIDConnectAuthorizationRequest req = (OpenIDConnectAuthorizationRequest) request;
             if (req.getMaxAge() != null) {
-                idToken.setAuth_time(System.currentTimeMillis() / 1000);
+                idToken.setAuth_time(authTime / 1000);
             }
             if (req.getNonce() != null) {
                 idToken.setNonce(req.getNonce());
             }
         }
-        if (accessToken != null && clientMetadata.getId_token_signed_response_alg() != null) { // response_type = "code id_token token" 时必须返回at_hash
-            try {
-                JsonWebAlgorithm alg = JsonWebAlgorithm.getJwsAlgorithm(clientMetadata.getId_token_signed_response_alg());
+        try {
+            JsonWebAlgorithm alg = Optional.ofNullable(clientMetadata.getId_token_signed_response_alg()).map(JsonWebAlgorithm::getJwsAlgorithm).orElse(null);
+            if (alg != null) { // response_type = "code id_token token" 时必须返回at_hash
                 byte[] signature = alg.digest(accessToken.getToken().getBytes(StandardCharsets.UTF_8));
                 idToken.setAt_hash(JsonWebToken.ENCODER.encodeToString(ByteBuffer.wrap(signature, 0, signature.length / 2).array()));
-            } catch (GeneralSecurityException gse) {
-                throw new RuntimeException(gse.getMessage(), gse);
             }
-        }
-        if (request.getResponseType().contains(Authorization.PARAM_CODE)) { // response_type = "code id_toke" 或 "code id_token token" 时必须返回at_hash
-            try {
-                JsonWebAlgorithm alg = JsonWebAlgorithm.getJwsAlgorithm(clientMetadata.getId_token_signed_response_alg());
-                byte[] signature = alg.digest(code.getToken().getBytes(StandardCharsets.UTF_8));
+            if (authorizationCode != null && alg != null) { // response_type = "code id_token" 或 "code id_token token" 时必须返回c_hash
+                byte[] signature = alg.digest(authorizationCode.getBytes(StandardCharsets.UTF_8));
                 idToken.setC_hash(JsonWebToken.ENCODER.encodeToString(ByteBuffer.wrap(signature, 0, signature.length / 2).array()));
-            } catch (GeneralSecurityException gse) {
-                throw new RuntimeException(gse.getMessage(), gse);
             }
-        }
 
-        JsonWebKey<?> key = null;
-        JsonWebAlgorithm algorithm = jwt ? JsonWebAlgorithm.getJweAlgorithm(joseHeader.getAlg()) :
-                JsonWebAlgorithm.getJwsAlgorithm(joseHeader.getAlg());
-        if (algorithm.support(KeyOperation.MAC)) { // 对称密钥使用client_secret
-            JsonWebKeySet.SymmetricKey aesKey = new JsonWebKeySet.SymmetricKey();
-            aesKey.importKey(new SecretKeySpec(clientMetadata.getClient_secret().getBytes(StandardCharsets.US_ASCII), JsonWebAlgorithm.AES_ALGORITHM));
-            key = aesKey;
-        } else if (algorithm.support(KeyOperation.SIGN)) { // 非对称密钥使用客户端公钥
-            for (JsonWebKey<?> item : clientMetadata.getJwks().getKeys()) {
-                if (item.isAsymmetric()) {
-                    key = item;
-                    break;
-                }
+            JsonWebKey<?> key = null; // ID Token的密钥使用发现/注册协商时事先保存的，而不是在JOSE请求头中指定
+            JsonWebAlgorithm algorithm = jwt ? JsonWebAlgorithm.getJweAlgorithm(joseHeader.getAlg()) :
+                    JsonWebAlgorithm.getJwsAlgorithm(joseHeader.getAlg());
+            if (algorithm.support(KeyOperation.MAC)) { // 对称密钥使用client_secret
+                JsonWebKeySet.SymmetricKey aesKey = new JsonWebKeySet.SymmetricKey();
+                aesKey.importKey(new SecretKeySpec(clientMetadata.getClient_secret().getBytes(StandardCharsets.US_ASCII), JsonWebAlgorithm.AES_ALGORITHM));
+                key = aesKey;
+            } else if (algorithm.support(KeyOperation.SIGN)) { // 非对称密钥使用客户端公钥
+                key = Arrays.stream(clientMetadata.getJwks().getKeys()).filter(JsonWebKey::isAsymmetric).findFirst().orElse(null);
             }
+            return jwt ? JsonWebToken.toCompactJWE(joseHeader, idToken, serializer, key) : JsonWebToken.toCompactJWS(joseHeader, idToken, serializer, key);
+        } catch (GeneralSecurityException gse) {
+            throw new RuntimeException(gse.getMessage(), gse);
         }
-        return jwt ? JsonWebToken.toCompactJWE(joseHeader, idToken, serializer, key) : JsonWebToken.toCompactJWS(joseHeader, idToken, serializer, key);
+    }
+
+    protected ServerResponse aroundAuth(int type, String key, Supplier<Boolean> action) {
+        Cache<String, Audit> cache = cacheManager.getCache(TOKEN_FAILURE_CACHE_NAME, String.class, Audit.class);
+        Audit audit = cache.get(key);
+        if (audit != null && audit.getFailureTimes() > serverConfig.getMaxFailureTimes()) {
+            return new ErrorResponse(ErrorValue.access_denied.name());
+        }
+        boolean result = action.get();
+        if (!result) {
+            if (audit == null) {
+                audit = new Audit();
+                audit.setType(type);
+            }
+            audit.setFailureTimes(audit.getFailureTimes() + 1);
+            audit.setLastFailureTime(Instant.now());
+            cache.put(key, audit);
+        }
+        return null;
     }
 
     @Override
@@ -740,6 +832,7 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
             return new ErrorResponse(ErrorValue.invalid_request.name(), "multiply param value");
         }
         Authorization.GrantType grantType = Authorization.GrantType.getInstance(request.getGrantType());
+        UserInfo userInfo;
         if (Authorization.GrantType.AUTHORIZATION_CODE == grantType) { // grant_type, code, redirect_uri, client_id
             if (request.getCode() == null || request.getRedirectUri() == null) {
                 return new ErrorResponse(ErrorValue.invalid_request.name(), "missing required parameters");
@@ -756,17 +849,17 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
                 return new ErrorResponse(ErrorValue.invalid_request.name(), "not register redirect_uri");
             }
 
-            Cache<String, OAuth2Token> cache = cacheManager.getCache(AUTHORIZATION_CODE_CACHE_NAME, String.class, OAuth2Token.class);
-            OAuth2Token cacheValue = cache.get(String.format(AUTHORIZATION_FORMAT, request.getCode()));
-            if (cacheValue == null || !cacheValue.virgin || cacheValue.revoked) {
+            Cache<String, Authorization.Request> cache = cacheManager.getCache(AUTHORIZATION_CODE_CACHE_NAME, String.class, Authorization.Request.class);
+            Authorization.Request cacheValue = cache.get(String.format(AUTHORIZATION_FORMAT, request.getCode()));
+            if (cacheValue == null) {
                 return new ErrorResponse(ErrorValue.access_denied.name());
             }
             if (cacheValue.getRedirectUri() != null && !cacheValue.getRedirectUri().equals(request.getRedirectUri())) {
                 return new ErrorResponse(ErrorValue.invalid_request.name(), "redirect_uri MUST be identical");
             }
-            if (cacheValue.getChallenge() != null) {
+            if (cacheValue.getCodeChallenge() != null) {
                 String verifier;
-                if (Authorization.CHALLENGE_METHOD_S256.equals(cacheValue.getChallengeType())) {
+                if (Authorization.CHALLENGE_METHOD_S256.equals(cacheValue.getCodeChallengeMethod())) {
                     byte[] msg;
                     try {
                         msg = JsonWebAlgorithm.HS256.digest(request.getCodeVerifier().getBytes(StandardCharsets.US_ASCII));
@@ -777,33 +870,31 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
                 } else {
                     verifier = request.getCodeVerifier();
                 }
-                if (!verifier.equals(cacheValue.getChallenge())) {
+                if (!verifier.equals(cacheValue.getCodeChallenge())) {
                     return new ErrorResponse(ErrorValue.access_denied.name()); // error???
                 }
             }
-            cacheValue.virgin = false;
-
-            cache.put(String.format(AUTHORIZATION_FORMAT, request.getCode()), cacheValue);
+            cache.remove(String.format(AUTHORIZATION_FORMAT, request.getCode()));
+            userInfo = cacheManager.getCache(SUBJECT_CACHE_NAME, String.class, UserInfo.class)
+                    .get(String.format(SUBJECT_FORMAT, request.getClientId(), request.getCode()));
         } else if (Authorization.GrantType.RESOURCE_OWNER_PASSWORD_CREDENTIALS == grantType) { // grant_type, username, password, scope
             if (request.getUsername() == null || request.getPassword() == null) {
                 return new ErrorResponse(ErrorValue.invalid_request.name());
             }
-            ServerResponse client = findIssuedClient(credentials, request.getClientId(), request.getClientSecret());
-            if (!client.isSuccess()) {
-                return client;
-            }
             // 验证用户名、密码
-            boolean result = userService.authenticate(request.getUsername(), request.getPassword());
-            if (!result) {
-                // xxx 防止暴力破解：验证错误时进行限速
-                return new ErrorResponse(ErrorValue.invalid_grant.name());
+            Supplier<Boolean> supplier = () -> userService.authenticate(request.getUsername(), request.getPassword());
+            ServerResponse error = aroundAuth(1, String.format(TOKEN_FAILURE_TIMES_FORMAT, request.getClientId(), request.getUsername()), supplier);
+            if (error != null) {
+                return error;
             }
+            userInfo = userService.loadUserByName(request.getUsername());
         } else if (Authorization.GrantType.CLIENT_CREDENTIALS == grantType) { // grant_type, scope
             // 验证client_id、client_secret
             ServerResponse client = findIssuedClient(credentials, request.getClientId(), request.getClientSecret());
             if (!client.isSuccess()) {
                 return client;
             }
+            userInfo = null; // xxx 能否获取到用户信息
         } else if (Authorization.GrantType.REFRESH_TOKEN == grantType) {
             if (request.getRefreshToken() == null) {
                 return new ErrorResponse(ErrorValue.invalid_request.name(), "missing refresh_token parameter");
@@ -827,29 +918,25 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
                 return new ErrorResponse(ErrorValue.invalid_grant.name(), "refresh token is invalid, expired or revoked");
             }
 
-            token.virgin = false;
+            token.setVirgin(false);
             refreshTokenCache.put(String.format(REFRESH_TOKEN_FORMAT, request.getRefreshToken()), token);
+            userInfo = userService.loadUser(token.getSubject());
         } else if (Authorization.GrantType.DEVICE_AUTHORIZATION == grantType) { // 设备授权码模式, device polling
             if (request.getDeviceCode() == null || request.getClientId() == null) {
                 return new ErrorResponse(ErrorValue.invalid_request.name(), "missing required parameters");
             }
             // client credentials
             // device_code、user_code已在某个链接验证无误，该链接的所属系统通知或共享给授权服务器
-            Cache<String, OAuth2Token> cache = cacheManager.getCache(DEVICE_AUTHORIZATION_CODE_CACHE_NAME, String.class, OAuth2Token.class);
-            OAuth2Token approveResult = cache.get(String.format(DEVICE_AUTHORIZATION_CODE_FORMAT, request.getClientId(), request.getDeviceCode()));
-            if (approveResult == null || approveResult.virgin) {
+            Cache<String, UserInfo> cache = cacheManager.getCache(SUBJECT_CACHE_NAME, String.class, UserInfo.class);
+            userInfo = cache.getAndRemove(String.format(SUBJECT_FORMAT, request.getClientId(), request.getDeviceCode()));
+            if (userInfo == null) {
                 Cache<String, Audit> auditCache = cacheManager.getCache(TOKEN_FAILURE_CACHE_NAME, String.class, Audit.class);
                 Audit auditHistory = auditCache.get(String.format(TOKEN_FAILURE_TIMES_FORMAT, Authorization.DEVICE_AUTHORIZATION_ENDPOINT, request.getDeviceCode()));
                 if (auditHistory != null && auditHistory.getLastFailureTime().plusSeconds(5L * (long) Math.sqrt(auditHistory.getFailureTimes())).isAfter(Instant.now())) {
                     return new ErrorResponse(ErrorValue.slow_down.name());
                 }
                 return new ErrorResponse(ErrorValue.authorization_pending.name(), "the end user hasn't yet completed the user-interaction steps");
-            } else if (approveResult.getExpiresAt().isBefore(Instant.now())) {
-                return new ErrorResponse(ErrorValue.expired_token.name());
             }
-
-            approveResult.revoked = true;
-            cache.put(String.format(DEVICE_AUTHORIZATION_CODE_FORMAT, request.getClientId(), request.getDeviceCode()), approveResult);
         } else {
             return new ErrorResponse(ErrorValue.invalid_grant.name(), request.getGrantType());
         }
@@ -860,7 +947,7 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         if (!isInScope(resourceUris)) {
             return new ErrorResponse(ErrorValue.invalid_scope.name(), "The requested scope is exceeds the scope granted by the resource owner");
         }
-        OAuth2Token accessToken = generateAccessToken();
+        OAuth2Token accessToken = generateAccessToken(request.getClientId(), userInfo, findAudiences(request.getScope()), request.getScope());
         accessToken.setClientId(request.getClientId());
         cacheManager.getCache(ACCESS_TOKEN_CACHE_NAME, String.class, OAuth2Token.class)
                 .put(String.format(ACCESS_TOKEN_FORMAT, accessToken.getToken()), accessToken);
@@ -869,12 +956,17 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         if (serverConfig.getRefreshTokenTtl() != null) {
             OAuth2Token refreshToken = generateRefreshToken();
             refreshToken.setClientId(request.getClientId());
+            refreshToken.setSubject(userInfo.getSub());
             refreshToken.setVirgin(true);
             cacheManager.getCache(REFRESH_TOKEN_CACHE_NAME, String.class, OAuth2Token.class)
                     .put(String.format(REFRESH_TOKEN_FORMAT, refreshToken.getToken()), refreshToken);
             response.setRefresh_token(refreshToken.getToken());
         }
         return response;
+    }
+
+    protected List<String> findAudiences(String scope) {
+        return serverConfig.getAudiences();
     }
 
     protected boolean isInScope(List<URI> resourceUris) {
@@ -953,10 +1045,6 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         return clientMetadata;
     }
 
-    protected boolean shouldDeny(Authorization.Request request) {
-        return false;
-    }
-
     protected String generateChars(boolean unique, int minLength, int maxLength) {
         assert minLength > 0 && maxLength >= minLength;
         if (unique) {
@@ -1016,9 +1104,9 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         String clientId;
         Matcher matcher = BEARER_PATTERN.matcher(credentials);
         if (matcher.matches()) {
-            String accessToken = matcher.group("token");
-            OAuth2Token token = cacheManager.getCache(ACCESS_TOKEN_CACHE_NAME, String.class, OAuth2Token.class)
-                    .get(String.format(ACCESS_TOKEN_FORMAT, accessToken));
+            String bearerToken = matcher.group("token");
+            OAuth2Token token = cacheManager.getCache(TOKEN_CACHE_NAME, String.class, OAuth2Token.class)
+                    .get(String.format(TOKEN_FORMAT, bearerToken));
             if (token == null || token.revoked) {
                 return new ErrorResponse(ErrorValue.invalid_token.name());
             }
@@ -1035,7 +1123,7 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
                     .get(String.format(REFRESH_TOKEN_FORMAT, request.getToken()));
             if (refreshToken != null && refreshToken.getClientId().equals(clientId)) {
                 Introspection.Response response = new Introspection.Response(!refreshToken.revoked); // xxx other info
-                response.setIat((int) refreshToken.getExpiresAt().getEpochSecond());
+                response.setIat((int) refreshToken.getIssuedAt().getEpochSecond());
                 if (refreshToken.getExpiresAt() != null) {
                     response.setExp((int) refreshToken.getExpiresAt().getEpochSecond());
                 }
@@ -1047,11 +1135,9 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
                     .get(String.format(ACCESS_TOKEN_FORMAT, request.getToken()));
             if (accessToken != null && accessToken.getClientId().equals(clientId)) {
                 Introspection.Response response = new Introspection.Response(!accessToken.revoked); // xxx other info
-                response.setIat((int) accessToken.getExpiresAt().getEpochSecond());
+                response.setIat((int) accessToken.getIssuedAt().getEpochSecond());
                 response.setClient_id(clientId);
-                if (accessToken.getExpiresAt() != null) {
-                    response.setExp((int) accessToken.getExpiresAt().getEpochSecond());
-                }
+                response.setExp((int) accessToken.getExpiresAt().getEpochSecond());
                 return response;
             }
             return new Introspection.Response(false);
@@ -1077,16 +1163,22 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         }
         Registration.InformationResponse clientInfo = (Registration.InformationResponse) maybeClient;
         if (request.getTokenTypeHint() == null || Revocation.TOKEN_TYPE_REFRESH_TOKEN.equals(request.getTokenTypeHint())) {
-            cacheManager.getCache(REFRESH_TOKEN_CACHE_NAME, String.class, String.class)
-                    .remove(String.format(REFRESH_TOKEN_FORMAT, request.getToken()), clientInfo.getClient_id());
+            evictIfMatch(REFRESH_TOKEN_CACHE_NAME, REFRESH_TOKEN_FORMAT, clientInfo.getClient_id(), request.getToken());
             return null;
         }
         if (request.getTokenTypeHint() == null || Revocation.TOKEN_TYPE_ACCESS_TOKEN.equals(request.getTokenTypeHint())) {
-            cacheManager.getCache(ACCESS_TOKEN_CACHE_NAME, String.class, String.class)
-                    .remove(String.format(ACCESS_TOKEN_FORMAT, clientInfo.getClient_id()), request.getToken());
+            evictIfMatch(ACCESS_TOKEN_CACHE_NAME, ACCESS_TOKEN_FORMAT, clientInfo.getClient_id(), request.getToken());
             return null;
         }
         return new ErrorResponse(ErrorValue.unsupported_token_type.name());
+    }
+
+    private void evictIfMatch(String cacheName, String keyFormat, String clientId, String token) {
+        Cache<String, OAuth2Token> cache = cacheManager.getCache(cacheName, String.class, OAuth2Token.class);
+        OAuth2Token tokenValue = cache.getAndRemove(String.format(keyFormat, token));
+        if (tokenValue != null && !tokenValue.getClientId().equals(clientId)) {
+            cache.put(String.format(keyFormat, token), tokenValue);
+        }
     }
 
     /**
@@ -1117,15 +1209,8 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         if (token == null || token.revoked) {
             return new ErrorResponse(ErrorValue.invalid_token.name());
         }
-        UserInfo userInfo = userService.loadUser(accessToken);
+        UserInfo userInfo = userService.loadUser(token.getSubject());
         return new UserInfoResponse(userInfo);
-    }
-
-    @RequiredArgsConstructor
-    @Getter
-    private static class ErrorValueException extends RuntimeException {
-
-        private final ErrorResponse error;
     }
 
     @Getter
@@ -1135,13 +1220,11 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
 
         private String token; // 令牌
 
-        private String challenge; // 挑战信息
+        private String tokenType; // opaque or jwt
 
-        private String challengeType; // 挑战类型
+        private String subject; // 授权主体
 
-        private String clientId; // 令牌受体
-
-        private String redirectUri; // 授权码模式保存
+        private String clientId; // 授权给的客户端
 
         private Instant issuedAt; // 令牌颁发时间
 
@@ -1150,6 +1233,69 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         private boolean virgin; // 只能使用一次用的标记
 
         private boolean revoked; // 撤销标记
+    }
+
+    @Getter
+    @Setter
+    @ToString
+    protected static class JwtAccessToken implements JsonWebToken {
+        /**
+         * 签发主体
+         */
+        protected final String iss;
+
+        /**
+         * 失效时间（单位：秒）
+         */
+        protected final Integer exp;
+
+        /**
+         * 目标受众
+         */
+        protected final Object aud;
+
+        /**
+         * 持有主体
+         */
+        protected final String sub;
+
+        protected final String client_id;
+
+        /**
+         * 签发时间（单位：秒）
+         */
+        protected final Integer iat;
+
+        /**
+         * JSON Web Token标识
+         */
+        protected final String jti;
+
+        /**
+         * 令牌最早可用时间（单位：秒）
+         */
+        protected Integer nbf;
+
+        protected String scope;
+
+        /**
+         * <a href="https://www.rfc-editor.org/rfc/rfc7643.txt">System for Cross-domain Identity Management: Core Schema</a>
+         */
+        protected List<Object> groups; // {value:,$ref:,display:, type:}
+
+        private List<Object> entitlements; // {value:, display:, type:, primary:}
+
+        protected List<Object> roles; // {value:, display:, type:, primary:}
+
+        JwtAccessToken(URL issuer, Instant expiration, Object audience, String subject, String clientId, Instant issuedAt, String jsonWebTokenIdentifier) {
+            this.iss = issuer.toString();
+            this.exp = Math.toIntExact(expiration.getEpochSecond());
+            this.aud = Objects.requireNonNull(audience);
+            this.sub = Objects.requireNonNull(subject);
+            this.client_id = Objects.requireNonNull(clientId);
+            this.iat = Math.toIntExact(issuedAt.getEpochSecond());
+            this.jti = Objects.requireNonNull(jsonWebTokenIdentifier);
+        }
     }
 
     @Getter
@@ -1351,7 +1497,7 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
         /**
          * 目标受众
          */
-        protected String aud;
+        protected Object aud;
 
         /**
          * 失效时间（单位：秒）
@@ -1404,6 +1550,7 @@ public class OpenIDConnectProvider implements Registration, Authorization, Intro
             this.exp = expirationTime;
             this.iat = issueTime;
         }
+
     }
 
     @Getter

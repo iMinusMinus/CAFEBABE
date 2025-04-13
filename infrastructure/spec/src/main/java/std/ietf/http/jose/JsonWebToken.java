@@ -7,6 +7,7 @@ import java.util.function.Function;
 
 /**
  * <a href="https://www.rfc-editor.org/rfc/rfc7519">JSON Web Token</a>定义了可选声明，JWT信息是公开的，不能包含敏感数据
+ * @see org.eclipse.microprofile.jwt.JsonWebToken
  * @author iMinusMinus
  * @date 2025-03-20
  */
@@ -20,43 +21,36 @@ public interface JsonWebToken {
      * 签发主体
      */
     String getIss();
-    void setIss(String issuer);
 
     /**
      * 持有主体
      */
     String getSub();
-    void setSub(String subject);
 
     /**
      * 目标受众
      */
-    String getAud();
-    void setAud(String audience);
+    Object getAud();
 
     /**
      * 失效时间（单位：秒）
      */
     Integer getExp();
-    void setExp(Integer expire);
 
     /**
      * 最早可用时间（单位：秒）
      */
     Integer getNbf();
-    void setNbf(Integer notBefore);
 
     /**
      * 签发时间（单位：秒）
      */
     Integer getIat();
-    void setIat(Integer issueAt);
 
     /**
      * JWT标识
      */
     String getJti();
-    void setJti(String jwtId);
 
     /**
      * 生成JWS

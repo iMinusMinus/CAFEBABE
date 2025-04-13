@@ -43,6 +43,10 @@ public interface Introspection {
 
         transient boolean illegal;
 
+        public Request(String token) {
+            this.token = token;
+        }
+
         public Request(Map<String, List<String>> multiValueMap) {
             String token = null;
             try {
@@ -79,9 +83,9 @@ public interface Introspection {
         protected String sub;
 
         /**
-         * 目标受众
+         * 目标受众：单个时类型为String，多个时类型为String集合/数组
          */
-        protected String aud;
+        protected Object aud;
 
         /**
          * 失效时间（单位：秒）

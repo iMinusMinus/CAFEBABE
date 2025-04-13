@@ -6,8 +6,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
 
+import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URL;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -259,12 +262,6 @@ public interface Authorization {
     default String toConsentPage(String consentPage, Request request) {
         StringBuilder url = new StringBuilder(consentPage);
         url.append('?').append(PARAM_CLIENT_ID).append('=').append(request.getClientId());
-        if (request.getScope() != null) {
-            url.append('&').append(PARAM_SCOPE).append('=').append(request.getScope());
-        }
-        if (request.getState() != null) {
-            url.append('&').append(PARAM_STATE).append('=').append(request.getState());
-        }
         return url.toString();
     }
 
@@ -328,7 +325,7 @@ public interface Authorization {
      * @param errorResponse 错误信息
      * @return 跳转URL
      */
-    default String build(boolean success, Request request, boolean fragment,
+    default String build(boolean success, Request request, boolean fragment, AuthorizationServerMetadataResponse server,
                          String code, TokenResponse response, ErrorResponse errorResponse) {
         Objects.requireNonNull(request);
         int queryOffset = request.getRedirectUri().indexOf('?');
@@ -349,10 +346,17 @@ public interface Authorization {
         } else if (GrantType.AUTHORIZATION_CODE.getValue().equals(request.getResponseType())){
             onAuthorizeSuccess(query, code);
         } else {
-            handleUnknownResponseType(query, request, code, response,errorResponse);
+            handleUnknownResponseType(query, request, code, response, errorResponse);
         }
         if (request.getState() != null) {
             query.append('&').append(PARAM_STATE).append('=').append(request.getState());
+        }
+        if (server.authorization_response_iss_parameter_supported) {
+            try {
+                String issuer = URLEncoder.encode(server.getIssuer().toString(), StandardCharsets.ISO_8859_1.name());
+                query.append('&').append("iss=").append(issuer);
+            } catch (UnsupportedEncodingException never) {
+            }
         }
         if (!fragment && fragmentOffset > 0) {
             query.append(request.getRedirectUri().substring(fragmentOffset));
@@ -644,6 +648,18 @@ public interface Authorization {
             return request;
         }
 
+        /**
+         * <a href="https://www.rfc-editor.org/rfc/rfc7521">Assertion Framework for OAuth 2.0 Client Authentication and Authorization Grants</a>
+         */
+        protected String assertion;
+
+        /**
+         * 如<a href="https://www.rfc-editor.org/rfc/rfc7522">saml2-bearer</a>, <a href="https://www.rfc-editor.org/rfc/rfc7523">jwt-bearer</a>
+         */
+        protected String clientAssertionType;
+
+        protected String clientAssertion;
+
         transient boolean illegal;
 
         public TokenRequest(Map<String, List<String>> multiValueMap) {
@@ -661,6 +677,9 @@ public interface Authorization {
                 this.refreshToken = getFirstValue(multiValueMap, Authorization.PARAM_REFRESH_TOKEN);
                 this.deviceCode = getFirstValue(multiValueMap, Authorization.PARAM_DEVICE_CODE);
                 this.resource = multiValueMap.get(Authorization.PARAM_RESOURCE);
+                this.assertion = getFirstValue(multiValueMap, "assertion");
+                this.clientAssertionType = getFirstValue(multiValueMap, "client_assertion_type");
+                this.clientAssertion = getFirstValue(multiValueMap, "client_assertion");
             } catch (IllegalArgumentException | NullPointerException e) {
                 illegal = true;
             }
@@ -702,6 +721,15 @@ public interface Authorization {
             }
             if (resource != null) {
                 map.put(Authorization.PARAM_RESOURCE, resource);
+            }
+            if (assertion != null) {
+                map.put("assertion", Collections.singletonList(assertion));
+            }
+            if (clientAssertionType != null) {
+                map.put("client_assertion_type", Collections.singletonList(clientAssertionType));
+            }
+            if (clientAssertion != null) {
+                map.put("client_assertion", Collections.singletonList(clientAssertion));
             }
             return map;
         }

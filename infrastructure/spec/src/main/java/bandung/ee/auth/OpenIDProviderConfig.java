@@ -9,6 +9,7 @@ import std.ietf.http.oauth.AuthorizationServerMetadataResponse;
 
 import java.net.URL;
 import java.time.Duration;
+import java.util.List;
 
 @Getter
 @Setter
@@ -42,4 +43,6 @@ public class OpenIDProviderConfig extends AuthorizationServerMetadataResponse {
     private JsonWebKeySet keys;
 
     private int maxFailureTimes = 3;
+
+    private List<String> audiences;
 }
