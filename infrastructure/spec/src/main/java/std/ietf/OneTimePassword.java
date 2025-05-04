@@ -39,7 +39,7 @@ public interface OneTimePassword<C, S> {
      * 服务端数据库包含用户首个或上次验证成功的OTP，验证时，服务端将收到的OTP进行解码，然后进行计算。
      * 如果计算结果和保存的结果一致，则认证通过，并将此次的OTP保存备用。
      */
-    class OTP implements OneTimePassword<String, byte[]> {
+    class OTP implements OneTimePassword<byte[], String> {
 
         /**
          * @see sun.security.provider.MD4
@@ -327,12 +327,12 @@ public interface OneTimePassword<C, S> {
         }
 
         /**
-         * @param challenge  挑战信息
          * @param passPhrase 用户密码，为避免穷举攻击/字典攻击，应不少于10个字符，建议为可视字符
+         * @param challenge  挑战信息
          * @return OTP
          */
         @Override
-        public String generate(String challenge, byte[] passPhrase) {
+        public String generate(byte[] passPhrase, String challenge) {
             Matcher matcher = CHALLENGE_SYNTAX.matcher(challenge);
             if (!matcher.matches()) {
                 throw new IllegalArgumentException("bad challenge: " + challenge);
@@ -358,6 +358,11 @@ public interface OneTimePassword<C, S> {
                     throw new IllegalArgumentException("The seed MUST consist of purely alphanumeric characters");
                 }
             }
+            return generateOTP(passPhrase, algorithm, times, seed, sixWordFormat, separator);
+        }
+
+        public static String generateOTP(byte[] passPhrase, String algorithm, int times, byte[] seed,
+                                         boolean sixWordFormat, String separator) {
             byte[] truncated = digest(passPhrase, algorithm, seed);
             while (times-- > 0) {
                 truncated = digest(truncated, algorithm, new byte[0]);
@@ -365,7 +370,7 @@ public interface OneTimePassword<C, S> {
             return sixWordFormat ? bytesToSixWords(truncated, separator) : bytesToHexStr(truncated, separator);
         }
 
-        public static byte[] digest(byte[] passPhrase, String algorithm, byte[] seed) {
+        private static byte[] digest(byte[] passPhrase, String algorithm, byte[] seed) {
             MessageDigest md;
             try {
                 md = "md4".equalsIgnoreCase(algorithm) ?

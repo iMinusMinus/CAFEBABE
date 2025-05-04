@@ -23,8 +23,8 @@ public class OneTimePasswordTest {
         String seed = "iamvalid";
         int count = 99;
         String alg = "<any>";
-        OneTimePassword<String, byte[]> otp = new OneTimePassword.OTP(false);
-        Assertions.assertThrows(IllegalArgumentException.class, () -> otp.generate(String.format(OPT_CHALLENGE_FORMAT, alg, count, seed), passPhrase.getBytes(StandardCharsets.UTF_8)));
+        OneTimePassword<byte[], String> otp = new OneTimePassword.OTP(false);
+        Assertions.assertThrows(IllegalArgumentException.class, () -> otp.generate(passPhrase.getBytes(StandardCharsets.UTF_8), String.format(OPT_CHALLENGE_FORMAT, alg, count, seed)));
     }
 
     @ParameterizedTest
@@ -33,8 +33,8 @@ public class OneTimePasswordTest {
         String passPhrase = "A_Valid_Pass_Phrase";
         int count = 99;
         String alg = "<any>";
-        OneTimePassword<String, byte[]> otp = new OneTimePassword.OTP(false);
-        Assertions.assertThrows(IllegalArgumentException.class, () -> otp.generate(String.format(OPT_CHALLENGE_FORMAT, alg, count, seed), passPhrase.getBytes(StandardCharsets.UTF_8)));
+        OneTimePassword<byte[], String> otp = new OneTimePassword.OTP(false);
+        Assertions.assertThrows(IllegalArgumentException.class, () -> otp.generate(passPhrase.getBytes(StandardCharsets.UTF_8), String.format(OPT_CHALLENGE_FORMAT, alg, count, seed)));
     }
 
     @Test
@@ -43,8 +43,8 @@ public class OneTimePasswordTest {
         String seed = "AValidSeed";
         int count = 99;
         String alg = "md5";
-        OneTimePassword<String, byte[]> otp = new OneTimePassword.OTP(false);
-        String result = otp.generate(String.format(OPT_CHALLENGE_FORMAT, alg, count, seed), passPhrase.getBytes(StandardCharsets.UTF_8));
+        OneTimePassword<byte[], String> otp = new OneTimePassword.OTP(false);
+        String result = otp.generate(passPhrase.getBytes(StandardCharsets.UTF_8), String.format(OPT_CHALLENGE_FORMAT, alg, count, seed));
         String outputHex = "85c43ee03857765b";
         String outputSixWord = "FOWL KID MASH DEAD DUAL OAF";
         Assertions.assertTrue(outputHex.equalsIgnoreCase(result));
@@ -53,8 +53,8 @@ public class OneTimePasswordTest {
     @ParameterizedTest
     @MethodSource(value = "otpProvider")
     public void testOTP(String algorithm, String passPhrase, String seed, String count, String hex, String word) {
-        OneTimePassword<String, byte[]> otp = new OneTimePassword.OTP(true);
-        String result = otp.generate(String.format(OPT_CHALLENGE_FORMAT, algorithm, count, seed), passPhrase.getBytes(StandardCharsets.UTF_8));
+        OneTimePassword<byte[], String> otp = new OneTimePassword.OTP(true);
+        String result = otp.generate(passPhrase.getBytes(StandardCharsets.UTF_8), String.format(OPT_CHALLENGE_FORMAT, algorithm, count, seed));
         Assertions.assertEquals(word, result);
     }
 
