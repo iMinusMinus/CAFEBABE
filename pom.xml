@@ -1,0 +1,375 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>modeling</groupId>
+    <artifactId>cafebabe</artifactId>
+    <packaging>pom</packaging>
+    <name>bandung</name>
+    <version>${revision}</version>
+    <description>
+        <![CDATA[
+        CAFEBABE is java magic!
+        ]]>
+    </description>
+    <url>https://cafe.babe/</url>
+
+    <prerequisites>
+        <maven>3.0</maven>
+    </prerequisites>
+
+    <issueManagement>
+        <system>bugzilla</system>
+        <url>https://issue.cafe.babe/</url>
+    </issueManagement>
+
+    <ciManagement>
+        <system>jenkins</system>
+        <url>https://ci.cafe.babe/</url>
+    </ciManagement>
+
+    <inceptionYear>2022</inceptionYear>
+
+    <mailingLists>
+        <mailingList>
+            <name>subscribe</name>
+            <subscribe>subscribe@cafe.babe</subscribe>
+        </mailingList>
+        <mailingList>
+            <name>unsubscribe</name>
+            <unsubscribe>unsubscribe@cafe.babe</unsubscribe>
+        </mailingList>
+    </mailingLists>
+
+    <developers>
+        <developer>
+            <id>iMinusMinus</id>
+            <name>iMinusMinus</name>
+            <roles>
+                <role>architect</role>
+                <role>developer</role>
+            </roles>
+            <url>https://github.com/iMinusMinus</url>
+            <email>mean.leung@outlook.com</email>
+            <timezone>+8</timezone>
+        </developer>
+    </developers>
+    <contributors>
+        <contributor>
+            <name>waiting for you</name>
+        </contributor>
+    </contributors>
+
+    <licenses>
+        <license>
+            <name>LGPL</name>
+            <url>https://www.gnu.org/licenses/lgpl-3.0.html</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <scm>
+        <url>https://github.com/iMinusMinus/CAFEBABE</url>
+        <connection>scm:git@github.com:iMinusMinus/CAFEBABE.git</connection>
+        <tag>master</tag>
+    </scm>
+
+    <organization>
+        <name>ju</name>
+        <url>https://ju.cafe.babe/</url>
+    </organization>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-checkstyle-plugin</artifactId>
+                    <version>3.1.0</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-pmd-plugin</artifactId>
+                    <version>3.12.0</version>
+                </plugin>
+                <plugin>
+                    <groupId>com.github.spotbugs</groupId>
+                    <artifactId>spotbugs-maven-plugin</artifactId>
+                    <version>4.7.1.1</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.jacoco</groupId>
+                    <artifactId>jacoco-maven-plugin</artifactId>
+                    <version>0.8.4</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.owasp</groupId>
+                    <artifactId>dependency-check-maven</artifactId>
+                    <version>11.1.0</version>
+                </plugin>
+                <!-- Starting with version 2.22.0, Maven Surefire and Maven Failsafe provide native support for executing tests on the JUnit Platform. -->
+                <!-- Java 17 require maven-surefire-plugin:3.0.0 above version -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.2.5</version>
+                </plugin>
+                <!-- Use at least maven-compiler-plugin 3.7.1 which adds multiReleaseOutput -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.13.0</version>
+                    <configuration>
+                        <annotationProcessorPaths> <!-- JDK9+ with module-info.java -->
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                                <version>${lombok.version}</version>
+                            </path>
+                        </annotationProcessorPaths>
+                        <multiReleaseOutput>true</multiReleaseOutput>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-antrun-plugin</artifactId>
+                    <version>3.1.0</version>
+                </plugin>
+                <!-- Starting with version 3.1.2, if the JAR file contains module-info.class, this plugin will update the modular descriptor with additional attributes. -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <version>3.4.2</version>
+                    <configuration>
+                        <addDefaultExcludes>true</addDefaultExcludes> <!-- since 3.4.0, exclude files and directories like .gitignore -->
+                        <archive>
+                            <manifestEntries>
+                                <Multi-Release>true</Multi-Release>
+                                <addClasspath>true</addClasspath>
+                                <classpathLayoutType>repository</classpathLayoutType>
+                            </manifestEntries>
+                            <index>true</index><!-- Deprecated since java 18! generate INDEX.LIST -->
+                        </archive>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-release-plugin</artifactId>
+                    <version>2.5.3</version>
+                    <configuration>
+                        <preparationGoals>clean verify</preparationGoals>
+                        <releaseProfiles>release</releaseProfiles>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-assembly-plugin</artifactId>
+                    <version>3.7.1</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>versions-maven-plugin</artifactId>
+                    <version>2.16.2</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jarsigner-plugin</artifactId>
+                    <version>3.1.0</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-dependency-plugin</artifactId>
+                    <version>3.8.1</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-remote-resources-plugin</artifactId>
+                    <version>3.2.0</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.cyclonedx</groupId>
+                    <artifactId>cyclonedx-maven-plugin</artifactId>
+                    <version>2.9.0</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>release</id>
+            <properties>
+                <revision>1.0.0</revision>
+            </properties>
+        </profile>
+    </profiles>
+
+    <modules>
+        <module>domain</module>
+        <module>infrastructure</module>
+        <module>implementation</module>
+    </modules>
+
+    <reporting>
+        <outputDirectory>${project.build.directory}/site</outputDirectory>
+    </reporting>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>javax</groupId>
+                <artifactId>javaee-api</artifactId>
+                <version>8.0.1</version>
+                <scope>provided</scope>
+                <exclusions>
+                    <exclusion>
+                        <groupId>com.sun.mail</groupId>
+                        <artifactId>javax.mail</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+            <dependency>
+                <groupId>javax.cache</groupId>
+                <artifactId>cache-api</artifactId>
+                <version>1.1.1</version>
+                <scope>compile</scope>
+            </dependency>
+            <dependency>
+                <groupId>javax.xml.bind</groupId>
+                <artifactId>jaxb-api</artifactId>
+                <version>2.3.1</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>javax.money</groupId>
+                <artifactId>money-api</artifactId>
+                <version>1.1</version>
+            </dependency>
+            <dependency>
+                <groupId>javax.measure</groupId>
+                <artifactId>unit-api</artifactId>
+                <version>2.2</version>
+            </dependency>
+            <dependency>
+                <groupId>javax.rules</groupId>
+                <artifactId>jsr94</artifactId>
+                <version>1.0</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>javax.annotation</groupId>
+                <artifactId>jsr305</artifactId>
+                <version>0.1</version>
+            </dependency>
+
+            <dependency>
+                <groupId>jakarta.platform</groupId>
+                <artifactId>jakarta.jakartaee-bom</artifactId>
+                <version>${jakartaee-api.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>jakarta.mvc</groupId>
+                <artifactId>jakarta.mvc-api</artifactId>
+                <version>${jakarta.mvc.version}</version>
+            </dependency>
+            <!-- jakarta.config-->
+            <!-- jakarta.data-->
+            <dependency>
+                <groupId>jakarta.data</groupId>
+                <artifactId>jakarta.data-api</artifactId>
+                <version>${jakarta.data.version}</version>
+            </dependency>
+            <!-- jakarta.grpc-->
+
+            <dependency>
+                <groupId>org.eclipse.microprofile</groupId>
+                <artifactId>microprofile</artifactId>
+                <version>${microprofile.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+                <version>${lombok.version}</version>
+                <scope>provided</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>io.opentelemetry</groupId>
+                <artifactId>opentelemetry-bom</artifactId>
+                <version>${opentelemetry.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.opentelemetry.instrumentation</groupId>
+                <artifactId>opentelemetry-instrumentation-annotations</artifactId>
+                <version>${opentelemetry-instrumentation-annotations.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>dev.openfeature</groupId>
+                <artifactId>sdk</artifactId>
+                <version>${openfeature.version}</version>
+            </dependency>
+
+
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-junit-jupiter</artifactId>
+                <version>${mockito.version}</version><!-- Mockito 3 requires Java 8, Mockito 5 requires Java 11 -->
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.openjdk.jmh</groupId>
+                <artifactId>jmh-generator-annprocess</artifactId>
+                <version>${jmh.version}</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <properties>
+        <revision>1.0.0-SNAPSHOT</revision>
+
+        <maven.compiler.source>8</maven.compiler.source>
+        <maven.compiler.target>8</maven.compiler.target>
+<!--        <maven.compiler.release>17</maven.compiler.release>-->
+
+        <jakartaee-api.version>10.0.0</jakartaee-api.version>
+        <jakarta.mvc.version>2.1.0</jakarta.mvc.version>
+        <jakarta.config.version>1.0</jakarta.config.version>
+        <jakarta.grpc.version>1.0</jakarta.grpc.version>
+        <jakarta.data.version>1.0.1</jakarta.data.version>
+
+        <microprofile.version>6.1</microprofile.version>
+
+        <opentelemetry.version>1.33.0</opentelemetry.version>
+        <opentelemetry-instrumentation-annotations.version>1.32.0</opentelemetry-instrumentation-annotations.version>
+
+        <openfeature.version>1.12.2</openfeature.version>
+
+        <lombok.version>1.18.22</lombok.version>
+
+
+        <junit.version>5.8.2</junit.version>
+        <mockito.version>4.11.0</mockito.version>
+        <jmh.version>1.37</jmh.version>
+
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    </properties>
+    
+</project>
