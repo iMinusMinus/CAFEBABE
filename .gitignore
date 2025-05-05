@@ -1,5 +1,56 @@
-# Compiled class file
+# OS
+.DS_Store
+._*
+
+Thumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.lnk
+
+
+# IDE
+.idea/**
+*.iml
+out/
+
+bin/
+tmp/
+*.tmp
+*.bak
+.settings/
+.springBeans
+
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+
+# Build Tool
+target/
+.mvn/wrapper/maven-wrapper.jar
+
+.gradle
+**/build/
+!src/**/build/
+gradle-app.setting
+!gradle-wrapper.jar
+.gradletasknamecache
+
+
+# PL
 *.class
+*.war
+*.jar
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+*.jmod
 
 # Log file
 *.log
@@ -9,15 +60,6 @@
 
 # Mobile Tools for Java (J2ME)
 .mtj.tmp/
-
-# Package Files #
-*.jar
-*.war
-*.nar
-*.ear
-*.zip
-*.tar.gz
-*.rar
 
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
