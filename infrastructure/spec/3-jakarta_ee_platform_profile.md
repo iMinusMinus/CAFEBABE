@@ -18,7 +18,7 @@ __Java Beans__ 起初的设计目标是用于可视化工具里的可重用软�
 
 一个bean类可以产生任意多个事件(event)，相关方法命名遵循一定格式，如事件为ActionEvent，方法为addActionListener、removeActionListener。监听器必须是java.util.EventListener子类。
 
-__Managed Beans__ 规范定义了受Jakarta EE容器管理的应用组件其基本的编程模型，大部分java类（要求非内部类、非抽象类、非jakarta.enterprise.inject.spi.Extension实现、所在包任意类都没有jakarta.enterprise.inject.Vetoed注解标记、有无参构造函数或构造函数参数有Inject注解），包括EJB都属于Managed Beans（即MBean?）。
+~~Managed Beans~~ 规范定义了受Jakarta EE容器管理的应用组件其基本的编程模型，大部分java类（要求非内部类、非抽象类、非jakarta.enterprise.inject.spi.Extension实现、所在包任意类都没有jakarta.enterprise.inject.Vetoed注解标记、有无参构造函数或构造函数参数有Inject注解），包括EJB都属于Managed Beans（即MBean?）。
 Managed Beans支持资源注入、生命周期回调以及拦截器。
 
 *CDI完整环境，有Decorator注解的抽象类也属于Managed Bean！*
@@ -95,7 +95,7 @@ Producer将消息发送到Destination，Consumer从Destination接收消息。
 | 负载均衡          | -                                                                               |                                                                                         |                                                                                        |
 | 消息筛选          | __SQL92__                                                                       |                                                                                         | JMS允许客户端通过消息头使用SQL92子集来过滤感兴趣的消息                                                        |
 
-JMS作为API标准，无法跨语言使用。与JMS不同的是AMQP定义协议保温，支持多种客户端，支持direct、fanout、topic、header四种消息收发模型。
+JMS作为API标准，无法跨语言使用。与JMS不同的是AMQP定义协议报文，支持多种客户端，支持direct、fanout、topic、header四种消息收发模型。
 spring-cloud-stream的分区、死信队列、负载均衡等依赖提供的Binder(Kafka, RabbitMQ等)。
 
 对于分布式消息，需要使用JMS对应的XA接口！
@@ -120,22 +120,22 @@ Batch规范定义了一个可以在XML中编排批处理任务的Java API和基�
 规范指定由JobOperator来启动任务，任务元数据来源于JobRepository，一个Job有许多的Step，每个Step可以是ItemReader、ItemProcessor、ItemWriter其一。
 每个Job每次执行有对应的JobInstance和JobParameters，每个JobInstance有对应的一个或多个(restart)JobExecution来记录执行信息。
 
-|          | Batch                                                  | spring-batch                                                   | 备注                                                        |
-|:---------|:-------------------------------------------------------|:---------------------------------------------------------------|:----------------------------------------------------------|
-| 任务启动器    | *jakarta.batch.operations.JobOperator*                 | *org.springframework.batch.core.launch.JobLauncher*            |                                                           |
-| 任务       | &#60; job id="" restartable="true" /&#62;              | *org.springframework.batch.core.Job*                           |                                                           |
-| 任务上下文    | *jakarta.batch.runtime.context.JobContext*             | *org.springframework.batch.core.scope.context.JobContext*      |                                                           |
-| 任务监听     | *jakarta.batch.api.listener.JobListener*               | *org.springframework.batch.core.JobExecutionListener*          | spring-batch支持使用注解在任务前后、异常时处理                             |
-| 步骤       | &#60; step id="" /&#62;                                | *org.springframework.batch.core.Step*                          |                                                           |
-| 步骤上下文    | *jakarta.batch.runtime.context.StepContext*            | *org.springframework.batch.core.scope.context.StepContext*     | spring-batch定义了JobScope、StepScope                         |
-| 步骤监听     | *jakarta.batch.api.listener.StepListener*              | *org.springframework.batch.core.StepListener*                  |                                                           |
-| 获取数据     | *jakarta.batch.api.chunk.ItemReader*                   | *org.springframework.batch.item.ItemReader*                    |                                                           |
-| 获取数据监听   | *jakarta.batch.api.chunk.listener.ItemReadListener*    | *org.springframework.batch.core.ItemReadListener*              | Batch/spring-batch支持重试、跳过监听，spring-batch支持使用注解在读取前后、异常时处理 |
-| 处理数据     | *jakarta.batch.api.chunk.ItemProcessor*                | *org.springframework.batch.item.ItemProcessor*                 |                                                           |
-| 处理数据监听   | *jakarta.batch.api.chunk.listener.ItemProcessListener* | *org.springframework.batch.core.ItemProcessListener*           | Batch/spring-batch支持重试、跳过监听，spring-batch支持使用注解在处理前后、异常的监听 |
-| 保存数据     | *jakarta.batch.api.chunk.ItemWriter*                   | *org.springframework.batch.item.ItemWriter*                    |                                                           |
-| 保存数据监听   | *jakarta.batch.api.chunk.listener.ItemWriteListener*   | *org.springframework.batch.core.ItemWriteListener*             | Batch/spring-batch支持重试、跳过监听，spring-batch支持使用注解在写前后、异常时处理  |
-| 分片       | *jakarta.batch.api.partition.PartitionMapper*          |                                                                |                                                           |
+|        | Batch                                                  | spring-batch                                                 | 备注                                                        |
+|:-------|:-------------------------------------------------------|:-------------------------------------------------------------|:----------------------------------------------------------|
+| 任务启动器  | *jakarta.batch.operations.JobOperator*                 | *org.springframework.batch.core.launch.JobLauncher*          |                                                           |
+| 任务     | &#60; job id="" restartable="true" /&#62;              | *org.springframework.batch.core.Job*                         |                                                           |
+| 任务上下文  | *jakarta.batch.runtime.context.JobContext*             | *org.springframework.batch.core.context.context.JobContext*  |                                                           |
+| 任务监听   | *jakarta.batch.api.listener.JobListener*               | *org.springframework.batch.core.JobExecutionListener*        | spring-batch支持使用注解在任务前后、异常时处理                             |
+| 步骤     | &#60; step id="" /&#62;                                | *org.springframework.batch.core.Step*                        |                                                           |
+| 步骤上下文  | *jakarta.batch.runtime.context.StepContext*            | *org.springframework.batch.core.context.context.StepContext* | spring-batch定义了JobScope、StepScope                         |
+| 步骤监听   | *jakarta.batch.api.listener.StepListener*              | *org.springframework.batch.core.StepListener*                |                                                           |
+| 获取数据   | *jakarta.batch.api.chunk.ItemReader*                   | *org.springframework.batch.item.ItemReader*                  |                                                           |
+| 获取数据监听 | *jakarta.batch.api.chunk.listener.ItemReadListener*    | *org.springframework.batch.core.ItemReadListener*            | Batch/spring-batch支持重试、跳过监听，spring-batch支持使用注解在读取前后、异常时处理 |
+| 处理数据   | *jakarta.batch.api.chunk.ItemProcessor*                | *org.springframework.batch.item.ItemProcessor*               |                                                           |
+| 处理数据监听 | *jakarta.batch.api.chunk.listener.ItemProcessListener* | *org.springframework.batch.core.ItemProcessListener*         | Batch/spring-batch支持重试、跳过监听，spring-batch支持使用注解在处理前后、异常的监听 |
+| 保存数据   | *jakarta.batch.api.chunk.ItemWriter*                   | *org.springframework.batch.item.ItemWriter*                  |                                                           |
+| 保存数据监听 | *jakarta.batch.api.chunk.listener.ItemWriteListener*   | *org.springframework.batch.core.ItemWriteListener*           | Batch/spring-batch支持重试、跳过监听，spring-batch支持使用注解在写前后、异常时处理  |
+| 分片     | *jakarta.batch.api.partition.PartitionMapper*          |                                                              |                                                           |
 
 Batch规范通过在XML配置一个批处理任务的开始(start)、执行下一步(next)、条件选择(&#60;next on="{exit status}" to="{id}" /&#62;)、终止(stop)、结束(end)、成功、失败(fail)，及流程(flow)、分叉(split)、决策(decision)这些特殊步骤。
 而spring-batch完全通过构建任务时通过Java API指定。

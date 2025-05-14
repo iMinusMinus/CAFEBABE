@@ -142,18 +142,18 @@ Kubernetes提供了多种类型探针：shell命令(exec)、TCP(tcpSocket)、HTT
 
 4. Metrics
 
-|                                     | MP Metrics                                          | Micrometer                                          | ~~Netflix Servo~~                                                  |
-|:------------------------------------|:----------------------------------------------------|:----------------------------------------------------|:-------------------------------------------------------------------|
-| REST endpoint                       | /metrics                                            | __NA__                                              | __NA__                                                             |
-| exposition format                   | Prometheus/OpenMetrics                              | text, Prometheus/OpenMetrics                        | -                                                                  |
-| scope                               | base, vendor, application                           | -                                                   | -                                                                  |
-| tags                                | \[a-zA-Z_]\[a-zA-Z0-9_]*                            | @Counted(extraTags=), @Timed(extraTags=)            | com.netflix.servo.annotations.MonitorTags                          |
-| metadata                            | name, unit, description                             | -                                                   | -                                                                  |
-| metrics: Gauge                      | org.eclipse.microprofile.metrics.annotation.Gauge   | *io.micrometer.core.instrument.Gauge*               | com.netflix.servo.annotations.Monitor(type=DataSourceType.GAUGE)   |
-| metrics: Counter                    | org.eclipse.microprofile.metrics.annotation.Counted | io.micrometer.core.annotation.Counted               | com.netflix.servo.annotations.Monitor(type=DataSourceType.COUNTER) |
-| metrics: Histogram                  | *org.eclipse.microprofile.metrics.Histogram*        | *io.micrometer.core.instrument.DistributionSummary* | -                                                                  |
-| metrics: Timer                      | org.eclipse.microprofile.metrics.annotation.Timer   | io.micrometer.core.annotation.Timed                 | *com.netflix.servo.monitor.Timer*                                  |
-| publish                             | _Micrometer, OpenTelemetry Metrics, etc._           | JMX, logging, push, prometheus                      | JMX, memory, file                                                  |
+|                          | MP Metrics                                          | Micrometer                                          | ~~Netflix Servo~~                                                  |
+|:-------------------------|:----------------------------------------------------|:----------------------------------------------------|:-------------------------------------------------------------------|
+| REST endpoint            | /metrics                                            | __NA__                                              | __NA__                                                             |
+| exposition format        | Prometheus/OpenMetrics                              | text, Prometheus/OpenMetrics                        | -                                                                  |
+| context                  | base, vendor, application                           | -                                                   | -                                                                  |
+| tags                     | \[a-zA-Z_]\[a-zA-Z0-9_]*                            | @Counted(extraTags=), @Timed(extraTags=)            | com.netflix.servo.annotations.MonitorTags                          |
+| metadata                 | name, unit, description                             | -                                                   | -                                                                  |
+| metrics: Gauge           | org.eclipse.microprofile.metrics.annotation.Gauge   | *io.micrometer.core.instrument.Gauge*               | com.netflix.servo.annotations.Monitor(type=DataSourceType.GAUGE)   |
+| metrics: Counter         | org.eclipse.microprofile.metrics.annotation.Counted | io.micrometer.core.annotation.Counted               | com.netflix.servo.annotations.Monitor(type=DataSourceType.COUNTER) |
+| metrics: Histogram       | *org.eclipse.microprofile.metrics.Histogram*        | *io.micrometer.core.instrument.DistributionSummary* | -                                                                  |
+| metrics: Timer           | org.eclipse.microprofile.metrics.annotation.Timer   | io.micrometer.core.annotation.Timed                 | *com.netflix.servo.monitor.Timer*                                  |
+| publish                  | _Micrometer, OpenTelemetry Metrics, etc._           | JMX, logging, push, prometheus                      | JMX, memory, file                                                  |
 
 __MicroProfile Metrics依赖"jakarta.platform:jakarta.jakartaee-core-api"、"org.osgi:org.osgi.annotation.versioning"。__
 MicroProfile Metrics提供了org.eclipse.microprofile.metrics.annotation.Metric用于配合依赖注入或注册到容器，而RegistryScope注解或RegistryType注解用于注入限定的MetricRegistry。
@@ -243,7 +243,7 @@ REST Client API的主要实现有Apache CXF、Open Liberty、Thorntail、RESTEas
 | : connect timeout   | {c.l.a.s.s}/mp-rest/connectTimeout=                                   | spring.cloud.openfeign.client.{name}.connectTimeout= |
 | : read timeout      | {c.l.a.s.s}/mp-rest/readTimeout=                                      | spring.cloud.openfeign.client.{name}.readTimeout=    |
 | contract            | JAX-RS                                                                | JAX-RS, OpenFeign, spring-web, SOAP                  |
-| inject              | @Inject @org.eclipse.microprofile.rest.client.inject.RestClient       | @Inject or @Resource or @Autowired                   |
+| inject              | @Inject @org.eclipse.microprofile.rest.client.inject.RestClient       | @Resource or @Autowired                              |
 | header propagation  | org.eclipse.microprofile.rest.client.annotation.RegisterClientHeaders | _feign.RequestInterceptor_                           |
 | service discovery   | __NA__                                                                | *Netflix Eureka*                                     |
 | fault tolerance     | *MP Fault Tolerance*                                                  | *Netflix Hystrix or Resilience4j*                    |

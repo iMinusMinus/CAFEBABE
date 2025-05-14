@@ -255,7 +255,9 @@ Spring EL在功能上有增强，比如可以使用上下文的bean，支持matc
 
 OGNL遵循了java中instanceof关键字用途，提供了筛选(collection.{? prop op value})和投影(collection.{prop})。
 
-__MVEL和JEXL实现了脚本引擎规范(JSR 223)，定位更偏向脚本语言，avaitor也逐渐往脚本语言方向发展，此处不做比较。commons-el项目已很久没有更新，此处不做比较。__
+_[JUEL](https://juel.sourceforge.net/index.html) 和commons-el实现了JSR 245中的EL规范，但很久之前项目已停止更新。_
+
+_MVEL和JEXL实现了脚本引擎规范(JSR 223)，定位更偏向脚本语言，avaitor也逐渐往脚本语言方向发展，此处不做比较。_
 
 7. websocket
 
