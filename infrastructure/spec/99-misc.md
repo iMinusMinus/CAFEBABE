@@ -21,33 +21,7 @@
 
 spring-cache也实现了JCache，底层支持的本地缓存可以是caffeine、cache2k、~~Guava cache~~、ehcache，分布式缓存可以是Infinispan、Hazelcast、Couchbase、 Redis等。
 
-2. Rule Engine
-
-JSR 94定义了简单的API，供Java SE和Java EE客户端访问规则引擎，包括注册/取消注册规则、解析规则、获取规则元数据、执行规则、获取规则执行结果、对结果进行过滤。
-其参考实现基于Jess(Java Expert System Shell)规则引擎。
-
-Java Content Repository (JCR)现由JSR 170和JSR 283组成，该规范定义了一个访问内容仓库（非结构化数据）的标准方式。
-
-|          | Drools                     | URule              | OpenL Tablets                | 备注                    |
-|:---------|:---------------------------|:-------------------|:-----------------------------|:----------------------|
-| 协议       | Apache                     | Apache, Commercial | LGPL                         | URule开源版本功能较少         |
-| JSR94兼容  | Y                          | N                  | N                            |                       |
-| JSR283兼容 | N                          | Jackrabbit         | Y                            |                       |
-| GUI      | Drools Workbench           | urule-console      | WebStudio                    |                       |
-| 规则集      | when-then                  | 规则集                | rule = conditions + actions  | Drools支持DMN FEEL      |
-| 决策流      | DMN DRD                    | 规则流                | N                            |                       |
-| 决策树      | NA                         | 决策树                | Decision Tree                |                       |
-| 决策表      | DMN Decision Table         | 决策表，_决策矩阵_         | Decision Table, Lookup Table |                       |
-| 函数集      | Y                          | Y                  | Y                            |                       |
-| 评分卡      | Spreadsheet Decision Table | 评分卡                | Spreadsheet Table            |                       |
-| DSL      | DRL                        | DSL                | Java, BEX                    | URule支持中文的脚本，由ANLTR解析 |
-| 规则匹配算法   | RETE                       | RETE               |                              |                       |
-
-表达式语言(EL)和脚本引擎(ScriptEngine)在一定程度上可以替代规则引擎，都仍属于开发者工具范畴，无法直接将自然语言直接当作规则来执行，离业务人员使用有一定距离。
-
-商业规则引擎除Jess外，还有应用服务器供应商产品如IBM ILOG JRules等，行业巨头产品如FICO Blaze Advisor等，独立的规则引擎厂商如OpenRules（支持DMN，如规则放在excel），开源的~~JLisa~~、RuleBook、EasyRule（基于表达式语言MVEL/JEXL/SpEL）、rule4j。
-
-3. JMX
+2. JMX
 
 JMX即Java Management Extensions，属于Java SE平台的一部分，它提供了一个简单、标准的监控、管理JVM和应用程序的方式。
 
@@ -98,6 +72,33 @@ spring-boot-actuator与JMX都提供了读、写属性的能力，JMX还提供了
 
 __JMX不只可以做监控（读取属性:DynamicMBean.getAttribute），也可以管理（修改属性:DynamicMBean.setAttribute，执行操作:DynamicMBean.invoke，产生通知）。__
 
+3. Rule Engine
+
+JSR 94定义了简单的API，供Java SE和Java EE客户端访问规则引擎，包括注册/取消注册规则、解析规则、获取规则元数据、执行规则、获取规则执行结果、对结果进行过滤。
+其参考实现基于Jess(Java Expert System Shell)规则引擎。
+
+Java Content Repository (JCR)现由JSR 170和JSR 283组成，该规范定义了一个访问内容仓库（非结构化数据）的标准方式。
+
+|          | Drools                     | URule              | OpenL Tablets                | 备注                    |
+|:---------|:---------------------------|:-------------------|:-----------------------------|:----------------------|
+| 协议       | Apache                     | Apache, Commercial | LGPL                         | URule开源版本功能较少         |
+| JSR94兼容  | Y                          | N                  | N                            |                       |
+| JSR283兼容 | N                          | Jackrabbit         | Y                            |                       |
+| GUI      | Drools Workbench           | urule-console      | WebStudio                    |                       |
+| 规则集      | when-then                  | 规则集                | rule = conditions + actions  | Drools支持DMN FEEL      |
+| 决策流      | DMN DRD                    | 规则流                | N                            |                       |
+| 决策树      | Decision Tree              | 决策树                | Decision Tree                |                       |
+| 决策表      | DMN Decision Table         | 决策表，_决策矩阵_         | Decision Table, Lookup Table |                       |
+| 函数集      | Y                          | Y                  | Y                            |                       |
+| 评分卡      | Spreadsheet Decision Table | 评分卡                | Spreadsheet Table            |                       |
+| DSL      | DRL, DSL                   | DSL                | Java, BEX                    | URule支持中文的脚本，由ANLTR解析 |
+| 规则匹配算法   | RETEoo                     | RETE               |                              |                       |
+
+表达式语言(EL)和脚本引擎(ScriptEngine)在一定程度上可以替代规则引擎，都仍属于开发者工具范畴，无法直接将自然语言直接当作规则来执行，离业务人员使用有一定距离。
+
+商业规则引擎除Jess外，还有应用服务器供应商产品如IBM ILOG JRules等，行业巨头产品如FICO Blaze Advisor等。
+独立的规则引擎厂商如OpenRules（支持DMN，如规则放在SpreadSheet），开源的~~JLisa~~、RuleBook、EasyRule（基于表达式语言MVEL/JEXL/SpEL）、rule4j、~~Mandarax~~。
+
 4. JPMS
 
 Jigsaw项目的产物为JPMS(Java Platform Module System)，在JDK9及以上版本内置。
@@ -136,7 +137,7 @@ module module.name { // 命名规则和包名类似，建议使用符合命名�
    exports pack.age to other.pack.age, another.pack.age; // 仅允许指定模块访问指定package
    
    opens module.name.sub; // 允许"module.name.sub"包运行时被访问（即反射）
-   opens module.name.child to p.k.g, pack.age; // 仅允许指定包
+   opens module.name.child to p.k.g, pack.age; // 仅允许指定模块可以反射指定包
    
    uses s.p.i; // 模块需要使用到SPI的实现
    
@@ -167,12 +168,20 @@ module module.name { // 命名规则和包名类似，建议使用符合命名�
 
 常见问题：
 
-   + unit test
+   + 单元测试
 
      通常单元测试会引入JUnit、Mockito一类的框架，在Maven中会被声明scope为test，即正式打包时不会包含单元测试框架。
-     而模块化后，我们的module-info.java自然不会包含junit等测试依赖包。而如果不将依赖引入，单元测试又会运行失败。
+     而模块化后，我们的module-info.java自然不会包含junit等测试依赖包。
 
-     解决办法是在测试目录("src/test/java")下添加module-info.java，复制正式模块文件内容，修改模块名称，并引入单元测试所需依赖。
+     当然，我们可以给测试目录也模块化，但会产生很多问题：
+     比如破坏约定的结构（因不同模块不能有相同包名，测试类和被测类无法在同一个包下）、被测类原package方法需要反射才能被测试类调用等。
+
+     如果想保持原来的形式，需要IDE支持，使得test目录按旧的classpath方式编译、运行测试，以免出现包引入、编译/运行出错。
+     此外，需要合适版本的构建插件（如maven-compiler-plugin、maven-surefire-plugin）保障源码模块化后的编译和测试源码以传统方式编译测试进行。
+
+   + 运行
+ 
+     很多框架是通过反射来完成DI、AOP，而我们通常没有那么清楚哪些包需要开放给那些模块，只能在运行时根据报错添加导出(--add-exports)、开放(--add-opens)的包。
 
    + 自动模块包引用冲突
 
