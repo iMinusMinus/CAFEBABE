@@ -37,7 +37,7 @@ public class JavaBean<T> {
     private static final Map<Class<?>, JavaBean<?>> CACHE = new WeakHashMap<>();
 
     private static final Predicate<Method> RW_PREDICATE = m -> Modifier.isPublic(m.getModifiers()) &&
-            !Modifier.isStatic(m.getModifiers());
+            !Modifier.isStatic(m.getModifiers()) && !Modifier.isAbstract(m.getModifiers());
 
     private static final Predicate<Field> NOT_STATIC = f -> !Modifier.isStatic(f.getModifiers());
 
