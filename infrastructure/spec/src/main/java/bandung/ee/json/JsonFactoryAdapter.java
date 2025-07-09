@@ -478,7 +478,9 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
                 }
                 offset++;
                 writeMark++;
-                readMoreTokens(buffer.length - readMark);
+                if (readMoreTokens(buffer.length - readMark) <= 0) {
+                    moveToHead(0);
+                }
             }
         }
 
@@ -2012,12 +2014,12 @@ class JsonFactoryAdapter implements JsonGeneratorFactory, JsonParserFactory, Jso
 
         @Override
         public JsonArray getJsonArray(String name) {
-            return get(name).asJsonArray();
+            return Optional.ofNullable(get(name)).map(JsonValue::asJsonArray).orElse(null);
         }
 
         @Override
         public JsonObject getJsonObject(String name) {
-            return get(name).asJsonObject();
+            return Optional.ofNullable(get(name)).map(JsonValue::asJsonObject).orElse(null);
         }
 
         @Override

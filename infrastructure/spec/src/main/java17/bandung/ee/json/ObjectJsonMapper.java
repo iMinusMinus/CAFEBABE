@@ -776,7 +776,7 @@ public class ObjectJsonMapper implements Jsonb {
             if (adapters != null && adapters.length > 0) {
                 this.adapters = new HashMap<>(adapters.length);
                 for (JsonbAdapter<?, ?> adapter : adapters) {
-                    Type[] ss = findCustomMappingActualType(adapter.getClass(), JsonbAdapter.class);
+                    Type[] ss = Reflections.findActualTypes(adapter.getClass(), JsonbAdapter.class);
                     assert ss.length == 2;
                     this.adapters.put(ss[0], new Pair<>(adapter, ss[1]));
                 }
@@ -796,38 +796,6 @@ public class ObjectJsonMapper implements Jsonb {
             this.locale = (Locale) jsonbConfig.getProperty(JsonbConfig.LOCALE).orElse(Locale.getDefault());
         }
 
-
-        static Type[] findCustomMappingActualType(Class<?> custom, Class<?> iface) {
-            assert iface.isAssignableFrom(custom);
-            Class<?> current = custom;
-            Set<Class<?>> interfaces = new LinkedHashSet<>();
-            while (current != Object.class && iface.isAssignableFrom(current)) {
-                Class<?>[] ancestorInterfaces = current.getInterfaces();
-                Type[] ancestorTypes = current.getGenericInterfaces();
-                for (int i = 0; i < ancestorInterfaces.length; i++) {
-                    if (!iface.isAssignableFrom(ancestorInterfaces[i])) {
-                        continue;
-                    }
-                    if (ancestorTypes[i] instanceof ParameterizedType) {
-                        return ((ParameterizedType) ancestorTypes[i]).getActualTypeArguments();
-                    } else {
-                        interfaces.add(ancestorInterfaces[i]);
-                    }
-                }
-                Type ancestor = current.getGenericSuperclass();
-                current = current.getSuperclass();
-                if (iface.isAssignableFrom(current) && ancestor instanceof ParameterizedType) {
-                    return ((ParameterizedType) ancestor).getActualTypeArguments();
-                }
-            }
-            for (Class<?> jsonbApi : interfaces) {
-                Type[] found = findCustomMappingActualType(jsonbApi, iface);
-                if (found != null) {
-                    return found;
-                }
-            }
-            return new Type[0];
-        }
 
         static Object newInstance(Class<?> klazz) {
             if (!klazz.isInterface() && !Modifier.isAbstract(klazz.getModifiers())) {
@@ -938,7 +906,7 @@ public class ObjectJsonMapper implements Jsonb {
             if (serializers != null && serializers.length > 0) {
                 this.serializers = new HashMap<>(serializers.length + 1);
                 for (JsonbSerializer<?> serializer : serializers) {
-                    Type[] types = JsonbContext.findCustomMappingActualType(serializer.getClass(), JsonbSerializer.class);
+                    Type[] types = Reflections.findActualTypes(serializer.getClass(), JsonbSerializer.class);
                     this.serializers.put(types[0], serializer);
                 }
             } else {
@@ -1075,7 +1043,7 @@ public class ObjectJsonMapper implements Jsonb {
             }
             JsonbAdapter<T, A> beanAdapter = annotationIntrospector.findAdapter(klazz);
             if (beanAdapter != null) {
-                Type[] jsonType = findCustomMappingActualType(beanAdapter.getClass(), JsonbAdapter.class);
+                Type[] jsonType = Reflections.findActualTypes(beanAdapter.getClass(), JsonbAdapter.class);
                 JsonbSerializer<A> beanSerializer = findTypeSerializer(jsonType[1], writeNull, numberFormat, dateFormat, locale); // XXX 新序列化器使用Original还是Adapted上的注解？
                 return new AdapterSerializer<>(beanAdapter, beanSerializer);
             }
@@ -1331,7 +1299,7 @@ public class ObjectJsonMapper implements Jsonb {
             }
             if (serializer == null && adapter != null) {
                 // 如果同时出现JsonbTypeAdapter注解和JsonbTypeSerializer/JsonbTypeDeserializer注解如何处理： 报错？ 忽略某一个？ 根据JsonbAdapter信息重新查找/创建一个JsonbSerializer（此时是否保留个性化注解信息）？
-                Type[] types = findCustomMappingActualType(adapter.getClass(), JsonbAdapter.class);
+                Type[] types = Reflections.findActualTypes(adapter.getClass(), JsonbAdapter.class);
                 serializer = findTypeSerializer(types[1], writeNull, numberFormat, dateFormat, locale);
                 serializer = new AdapterSerializer<T, S>(adapter, serializer);
             } else if (serializer == null) {
@@ -1365,6 +1333,8 @@ public class ObjectJsonMapper implements Jsonb {
 
         private final Stack<Type> hints = new Stack<>();
 
+        private final Map<Type, JsonbDeserializer> inCreation;
+
         JsonbDeserializationContext(JsonbConfig jsonbConfig, JsonBuilderFactory jsonBuilderFactory,
                                     Map<Class<?>, JsonbDeserializer<?>> builtIn) {
             super(jsonbConfig);
@@ -1376,7 +1346,7 @@ public class ObjectJsonMapper implements Jsonb {
             } else {
                 this.deserializers = new HashMap<>(deserializers.length + 1);
                 for (JsonbDeserializer dser : deserializers) {
-                    Type[] handles = findCustomMappingActualType(dser.getClass(), JsonbDeserializer.class);
+                    Type[] handles = Reflections.findActualTypes(dser.getClass(), JsonbDeserializer.class);
                     this.deserializers.put(handles[0], dser);
                 }
             }
@@ -1387,6 +1357,7 @@ public class ObjectJsonMapper implements Jsonb {
                     .orElse(null);
             this.root = true;
             this.numberFormat = null;
+            this.inCreation = new HashMap<>();
         }
 
         @Override
@@ -1505,7 +1476,7 @@ public class ObjectJsonMapper implements Jsonb {
             }
             JsonbAdapter<T, A> beanAdapter = annotationIntrospector.findAdapter(klazz); // 属性本身没有JsonbTypeAdapter/JsonbDeserializer注解，但对应类型上有
             if (beanAdapter != null) {
-                Type[] adaptedType = findCustomMappingActualType(beanAdapter.getClass(), JsonbAdapter.class);
+                Type[] adaptedType = Reflections.findActualTypes(beanAdapter.getClass(), JsonbAdapter.class);
                 JsonbDeserializer<A> beanDeserializer = findTypeDeserializer(adaptedType[1], numberFormat, dateFormat, locale);
                 return new AdapterDeserializer<>(beanAdapter, beanDeserializer, adaptedType[1]);
             }
@@ -1572,6 +1543,10 @@ public class ObjectJsonMapper implements Jsonb {
         }
 
         <T> JsonbDeserializer<T> createBeanDeserializer(Class<T> klazz) {
+            JsonbDeserializer beanDeser = inCreation.get(runtimeType);
+            if (beanDeser != null) {
+                return beanDeser;
+            }
             // public、protected的内部类和静态内部类时可被反序列化；匿名类不可被反序列化
             if (klazz.isAnonymousClass()) {
                 throw new JsonbException("Deserialization into anonymous classes is not supported");
@@ -1579,6 +1554,9 @@ public class ObjectJsonMapper implements Jsonb {
             if (klazz.isMemberClass() && !Modifier.isPublic(klazz.getModifiers()) && !Modifier.isProtected(klazz.getModifiers())) {
                 throw new JsonbException("Nested classes should be public or protected");
             }
+
+            JavaBeanDeserializer beanDeserializer = new JavaBeanDeserializer(hints.toArray(new Type[0]), caseInsensitive);
+            inCreation.put(runtimeType, beanDeserializer);
 
             JavaBean<T> beanInfo = JavaBean.introspect(klazz);
             Map<String, JavaProperty> propertyMappings = Arrays.stream(beanInfo.getProperties())
@@ -1602,7 +1580,7 @@ public class ObjectJsonMapper implements Jsonb {
                 Parameter[] parameters = executable.getParameters();
                 int start = klazz.isMemberClass() && !Modifier.isStatic(klazz.getModifiers()) ? 1 : 0;
                 for (int i = start; i < parameters.length; i++) {
-                    String annotatedName = annotationIntrospector.findNameForDeserialization(parameters[i]);
+                    String annotatedName = annotationIntrospector.findNameForDeserialization(parameters[i - start]);
                     String argName = Optional.ofNullable(annotatedName)
                             .orElse(parameters[i].getName()); // 编译时保留debug信息，则从类文件中可以获取常参数名，否则只能收到arg0形式
                     JavaProperty property = propertyMappings.get(argName); // 是否要从字段上获取个性化信息？
@@ -1615,9 +1593,9 @@ public class ObjectJsonMapper implements Jsonb {
                             annotationIntrospector.hasIgnoreMarker(property.getProperty())) {
                         throw new JsonbException("constructor argument must not static or transient");
                     }
-                    JsonbDateFormat argDateFormat = Optional.ofNullable(annotationIntrospector.findDateTimeFormat(parameters[i]))
+                    JsonbDateFormat argDateFormat = Optional.ofNullable(annotationIntrospector.findDateTimeFormat(parameters[i - start]))
                             .orElse(dateTimeFormatter);
-                    NumberFormat argNumberFormat = Optional.ofNullable(annotationIntrospector.findNumberFormat(parameters[i]))
+                    NumberFormat argNumberFormat = Optional.ofNullable(annotationIntrospector.findNumberFormat(parameters[i - start]))
                             .orElse(numberFormat);
                     String dateFormat = this.dateFormat;
                     Locale locale = this.locale;
@@ -1638,6 +1616,7 @@ public class ObjectJsonMapper implements Jsonb {
                         orElseThrow(() -> new JsonbException("no available constructor found on type: " + klazz)); // 可能是子类型，后续决定
                 beanInstantiator = new JavaBeanInstantiator<>(executable, Collections.emptyMap(), parametersRequired);
             }
+            beanDeserializer.withInstantiator(nonStaticMember, beanInstantiator);
 
             Class current = klazz;
             while (current != Object.class) {
@@ -1648,7 +1627,7 @@ public class ObjectJsonMapper implements Jsonb {
                 for (int i = 0; i < maxPropertyQuantity; i++) {
                     JavaProperty property = beanInfo.getProperties()[i];
                     if (current == klazz && beanInstantiator.getArgNameIndexPairs().containsKey(property.getName())) {
-                        log.log(Level.INFO, "property [{0}] is constructor argument of type {1}", new Object[] {property.getName(), current});
+                        log.log(Level.INFO, "property [{0}] is constructor argument of type {1}", new Object[] {property.getName(), current.getName()});
                         continue;
                     }
 
@@ -1684,7 +1663,9 @@ public class ObjectJsonMapper implements Jsonb {
 
                 current = current.getSuperclass();
             }
-            return new JavaBeanDeserializer<>(hints.toArray(new Type[0]), nonStaticMember, beanInstantiator, caseInsensitive, deserializers);
+            beanDeserializer.setPropertyDeserializers(deserializers);
+            inCreation.remove(runtimeType);
+            return beanDeserializer;
         }
 
         protected <D, T, A> Optional<JavaBeanPropertyDeserializer<D, T>> createPropertyDeserializer(JavaProperty<D, T> property,
@@ -1731,7 +1712,7 @@ public class ObjectJsonMapper implements Jsonb {
                 locale = JsonbDateFormat.DEFAULT_LOCALE.equals(dateFormat.locale()) ? this.locale : new Locale(dateFormat.locale());
             }
             if (deserializer == null && adapter != null) {
-                Type adaptedType = findCustomMappingActualType(adapter.getClass(), JsonbAdapter.class)[1];
+                Type adaptedType = Reflections.findActualTypes(adapter.getClass(), JsonbAdapter.class)[1];
                 deserializer = findTypeDeserializer(adaptedType, numberFormat, df, locale);
                 deserializer = new AdapterDeserializer<T, A>(adapter, deserializer, adaptedType);
             } else if (deserializer == null) {
@@ -3076,13 +3057,15 @@ public class ObjectJsonMapper implements Jsonb {
 
         @Override
         public void marshall(T obj, JsonGenerator generator, SerializationContext ctx) {
+            Set<String> wroteKeys = new HashSet<>();
             while (polymorphism != null) {
                 if (polymorphism.getSubClasses().isEmpty()) {
-                    log.log(Level.WARNING, "DO NOT both annotate concrete type with JsonbTypeInfo and use it as actual value");
+                    log.log(Level.WARNING, "DO NOT annotate concrete type[{0}] with JsonbTypeInfo and use it as actual value", polymorphism.getType());
                     break;
                 }
                 for (Map.Entry<String, Polymorphism<String>> entry : polymorphism.getSubClasses().entrySet()) {
                     if (entry.getValue().getType().isInstance(obj)) {
+                        wroteKeys.add(polymorphism.getBinding());
                         generator.write(polymorphism.getBinding(), entry.getKey());
                         polymorphism = entry.getValue();
                         break;
@@ -3090,6 +3073,9 @@ public class ObjectJsonMapper implements Jsonb {
                 }
             }
             for (JavaBeanPropertySerializer<T, Object> serializer : propertySerializers) {
+                if (!wroteKeys.add(serializer.propertyName)) {
+                    throw new JsonbException("polymorphism alias conflict with property name: " + serializer.propertyName);
+                }
                 serializer.serialize(serializer.get(obj), generator, ctx); // JavaBeanPropertySerializer handle null
             }
         }
@@ -3102,24 +3088,31 @@ public class ObjectJsonMapper implements Jsonb {
 
     private static class JavaBeanDeserializer<T> extends AbstractDeserializer<T> {
 
-        private final JavaBeanInstantiator<T> instantiator;
+        private JavaBeanInstantiator<T> instantiator;
 
-        private final Map<String, JavaBeanPropertyDeserializer<T, ?>> propertyDeserializers; // 反序列化时按流先后顺序进行
+        private Map<String, JavaBeanPropertyDeserializer<T, ?>> propertyDeserializers; // 反序列化时按流先后顺序进行
 
         private final boolean caseInsensitive;
 
-        private final Set<String> requiredParameters;
+        private Set<String> requiredParameters;
 
-        private final Object[] args;
+        private Object[] args;
 
         private static final Object UNSET = new Object();
 
-        JavaBeanDeserializer(Type[] hints, boolean nonStaticMember, JavaBeanInstantiator<T> instantiator, boolean caseInsensitive,
-                             List<JavaBeanPropertyDeserializer<T, ?>> deserializers) {
+        JavaBeanDeserializer(Type[] hints, boolean caseInsensitive) {
             super(hints);
+            this.caseInsensitive = caseInsensitive;
+        }
+
+        JavaBeanDeserializer withInstantiator(boolean nonStaticMember, JavaBeanInstantiator<T> instantiator) {
             this.instantiator = instantiator;
             int preserve = nonStaticMember ? 1 : 0;
             this.args =  new Object[preserve + instantiator.argNameIndexPairs.size()]; // 原生类型使用默认值，Optional*类型使用空值Optional*.empty()，其他的则为null
+            return this;
+        }
+
+        void setPropertyDeserializers(List<JavaBeanPropertyDeserializer<T, ?>> deserializers) {
             this.propertyDeserializers = new HashMap<>(deserializers.size());
             this.requiredParameters = new HashSet<>();
             for (JavaBeanPropertyDeserializer<T, ?> deserializer : deserializers) {
@@ -3155,7 +3148,6 @@ public class ObjectJsonMapper implements Jsonb {
                     } // else set to null
                 }
             }
-            this.caseInsensitive = caseInsensitive;
         }
 
 //        void setDeclaringObject(Object obj) {

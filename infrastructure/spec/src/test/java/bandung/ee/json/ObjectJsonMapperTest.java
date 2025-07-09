@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import javax.enterprise.util.TypeLiteral;
 import javax.json.bind.Jsonb;
 import javax.json.bind.JsonbBuilder;
 import javax.json.bind.JsonbConfig;
@@ -41,7 +42,6 @@ import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -938,23 +938,7 @@ public class ObjectJsonMapperTest {
         map.put("key2", 2);
         String obj = jsonb.toJson(map);
         System.out.println(obj);
-        Map<String, Integer> pm = jsonb.fromJson(obj, new ParameterizedType() {
-
-            @Override
-            public Type[] getActualTypeArguments() {
-                return new Type[] {String.class, Integer.class};
-            }
-
-            @Override
-            public Type getRawType() {
-                return Map.class;
-            }
-
-            @Override
-            public Type getOwnerType() {
-                return null;
-            }
-        });
+        Map<String, Integer> pm = jsonb.fromJson(obj, new TypeLiteral<Map<String, Integer>>(){}.getType());
         Assertions.assertNotNull(pm);
         Assertions.assertEquals(2, pm.size());
         Assertions.assertEquals(1, pm.get("key1"));
@@ -968,23 +952,7 @@ public class ObjectJsonMapperTest {
         String json = jsonb.toJson(list);
         Assertions.assertEquals("[1,2,3,4]", json);
 
-        List<Integer> obj = jsonb.fromJson(json, new ParameterizedType() {
-
-            @Override
-            public Type[] getActualTypeArguments() {
-                return new Type[] {Integer.class};
-            }
-
-            @Override
-            public Type getRawType() {
-                return List.class;
-            }
-
-            @Override
-            public Type getOwnerType() {
-                return null;
-            }
-        });
+        List<Integer> obj = jsonb.fromJson(json, new TypeLiteral<List<Integer>>(){}.getType());
 
         Assertions.assertEquals(list, obj);
     }
@@ -1103,6 +1071,16 @@ public class ObjectJsonMapperTest {
         m.setCycle(c);
         fork.setIndirect(m);
         Assertions.assertThrows(JsonbException.class, () -> jsonb.toJson(fork));
+    }
+
+    @Test
+    public void deserializeCycleReferenceType() {
+        JsonbConfig config = new JsonbConfig();
+        config.setProperty(BindingProvider.JSONB_ANNOTATION_INTROSPECTOR, new AnnotationIntrospector());
+        Jsonb jsonb = JsonbBuilder.newBuilder(BindingProvider.class.getName()).withConfig(config).build();
+
+        Fork fork = jsonb.fromJson("{\"age\":35,\"branch\":{\"age\":6,\"leaf\":true}}", Fork.class);
+        Assertions.assertTrue(fork.getBranch().isLeaf());
     }
 
     @Getter
@@ -1294,23 +1272,7 @@ public class ObjectJsonMapperTest {
         hm.put("jdk", new URL("https://jdk.java.net/"));
         m.put("键名", hm);
         generic.setMap(m);
-        ParameterizedType pt = new ParameterizedType() {
-
-            @Override
-            public Type[] getActualTypeArguments() {
-                return new Type[] {BigDecimal.class, URL.class};
-            }
-
-            @Override
-            public Type getRawType() {
-                return TestGeneric.class;
-            }
-
-            @Override
-            public Type getOwnerType() {
-                return null;
-            }
-        };
+        Type pt = new TypeLiteral<TestGeneric<BigDecimal, URL>>(){}.getType();
         String json = jsonb.toJson(generic, pt);
         System.out.println(json);
 

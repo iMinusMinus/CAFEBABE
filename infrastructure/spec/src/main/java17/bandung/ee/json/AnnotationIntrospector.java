@@ -320,6 +320,9 @@ public class AnnotationIntrospector {
             if (maybe.type().equals(ancestor)) {
                 throw new JsonbException("JsonbSubtype value MUST NOT declaring class"); // 会死循环/栈溢出
             }
+            if (!ancestor.isAssignableFrom(maybe.type())) {
+                throw new JsonbException("JsonbSubtype value MUST be sub class of JsonbTypeInfo class");
+            }
             Class<?> old = children.put(maybe.alias(), maybe.type());
             if (old != null) {
                 throw new JsonbException("found duplicate alias: " + old + " >> VS << " + maybe.type());

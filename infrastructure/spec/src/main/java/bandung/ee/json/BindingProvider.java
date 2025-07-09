@@ -36,15 +36,13 @@ public class BindingProvider extends JsonbProvider {
 
         @Override
         public JsonbBuilder withConfig(JsonbConfig config) {
-            Objects.requireNonNull(config);
-            this.config = config;
+            this.config = Objects.requireNonNull(config);
             return this;
         }
 
         @Override
         public JsonbBuilder withProvider(JsonProvider jsonpProvider) {
-            Objects.requireNonNull(jsonpProvider);
-            this.jsonpProvider = jsonpProvider;
+            this.jsonpProvider = Objects.requireNonNull(jsonpProvider);
             return this;
         }
 
