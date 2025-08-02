@@ -1,11 +1,14 @@
 package bandung.se;
 
+import bandung.ee.CommonAnnotations;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Type;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.URL;
@@ -35,6 +38,7 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Properties;
 import java.util.Set;
+import java.util.Stack;
 import java.util.TimeZone;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -86,8 +90,11 @@ public class Config implements ConfigMXBean {
     }
 
     public <T> List<T> getValues(String propertyName, Class<T> propertyType) {
-        return getOptionalValues(propertyName, propertyType)
-                .orElseThrow(() -> new NoSuchElementException("no such config property: " + propertyName));
+        Optional<List<T>> values = getOptionalValues(propertyName, propertyType);
+        if (!values.isPresent() || values.get().isEmpty()) {
+            throw new NoSuchElementException("no such config property: " + propertyName);
+        }
+        return values.get();
     }
 
     /**
@@ -150,15 +157,12 @@ public class Config implements ConfigMXBean {
         boolean escape = false;
         int position = 0;
         for (int i = 0; i < value.length(); i++) {
-            if (value.charAt(i) == '\\') { // Properties remove all '\', this condition never happen
+            if (value.charAt(i) == '\\') { // xxx Properties remove all '\', this condition never happen
                 escape = !escape; // #, !, =, :
             } else if (value.charAt(i) == ',' && !escape) {
                 int start = position == 0 ? 0 : position + 1;
-                if (i > start) {
-                    String item = value.substring(start, i).trim();
-                    if (item.length() > 0) {
-                        list.add(item);
-                    }
+                if (i > start) { // ignore empty value: 0,,1
+                    list.add(value.substring(start, i));
                 }
                 position = i;
             }
@@ -173,13 +177,30 @@ public class Config implements ConfigMXBean {
     }
 
     public <T> Optional<List<T>> getOptionalValues(String propertyName, Class<T> propertyType) {
-        Optional<String> value = getAndResolve(propertyName);
-        if (!value.isPresent()) {
+        List<String> values = null;
+        for (ConfigSource configSource : sources) {
+            if (configSource instanceof PropertiesConfigSource) {
+                values = ((PropertiesConfigSource) configSource).getIndexedProperty(propertyName);
+                if (values != null) {
+                    log.log(Level.FINER, "found index property {0} at {1}", new Object[] {propertyName, configSource.getName()});
+                    break;
+                }
+            }
+            String value = configSource.getValue(propertyName);
+            if (value != null) {
+                log.log(Level.FINER, "found {0} at {1}", new Object[] {propertyName, configSource.getName()});
+                values = parseValues(value);
+                break;
+            }
+        }
+        if (values == null) {
             return Optional.empty();
         }
         Converter<String, T> converter = getConverter(propertyType)
                 .orElseThrow(() -> new IllegalArgumentException("cannot convert property[" + propertyName + "] to type: " + propertyType));
-        List<T> list = parseValues(value.get()).stream().map(converter::convert).collect(Collectors.toList());
+        Function<String, String> expandFunc = s -> resolver.resolve(s, this); // 0. value, 1. ${value:default}, 2. ${value${include}}, 3. $ENC(jasypt) or ${alg-mod-padding::smallrye}
+        Function<String, T> func = expand ? expandFunc.andThen(converter::convert) : converter::convert;
+        List<T> list = values.stream().map(func).collect(Collectors.toList());
         return Optional.of(list);
     }
 
@@ -443,14 +464,18 @@ public class Config implements ConfigMXBean {
          * @param sources 配置源
          */
         public Builder withSources(ConfigSource... sources) {
-            for (ConfigSource configSource : sources) {
-                this.sources.add(configSource);
-            }
+            Collections.addAll(this.sources, sources);
             return this;
         }
 
         public Builder withConverters(Converter<String, ?>... converters) {
-            throw new UnsupportedOperationException();
+            for (Converter<String, ?> converter : converters) {
+                Stack<Type> stack = new Stack<>();
+                stack.push(converter.getClass());
+                Class target = Reflections.typeToClass(Reflections.findActualTypes(converter.getClass(), Converter.class)[1], stack);
+                withConverter(target, CommonAnnotations.getPriority(converter, Converter.DEFAULT_PRIORITY), converter);
+            }
+            return this;
         }
 
         /**
@@ -545,9 +570,7 @@ public class Config implements ConfigMXBean {
             if (!sources.isEmpty()) {
                 throw new IllegalStateException("please active profiles before add config source");
             }
-            for (String profile : profiles) {
-                activeProfiles.add(profile);
-            }
+            Collections.addAll(activeProfiles, profiles);
             return this;
         }
 
@@ -590,12 +613,73 @@ public class Config implements ConfigMXBean {
 
     public static class PropertiesConfigSource extends ConfigSource {
 
-        private final Properties properties;
+        protected final Properties properties;
+
+        protected final Map<String, List<String>> indexedProperties;
 
         public PropertiesConfigSource(String name, Properties properties, Integer order) {
             super(name, order);
             this.properties = properties;
+            this.indexedProperties = new HashMap<>();
+            processIndexProperties();
         }
+
+        List<String> getIndexedProperty(String key) {
+            return indexedProperties.get(key);
+        }
+
+        protected void processIndexProperties() {
+            Set<String> keys = properties.stringPropertyNames();
+            Map<String, Map<Integer, String>> tmp =  new HashMap<>();
+            for (String key : keys) {
+                processIndexProperty(tmp, key, properties.getProperty(key));
+            }
+            for (Map.Entry<String, Map<Integer, String>> entry : tmp.entrySet()) {
+                int length = entry.getValue().size();
+                List<String> values = new ArrayList<>(length);
+                for (int i = 0; i < length; i++) {
+                    String value = entry.getValue().get(i);
+                    if (value == null) {
+                        throw new IllegalArgumentException("missing key[" + entry.getKey() + "] index: " + i);
+                    }
+                    values.add(value);
+                }
+                indexedProperties.put(entry.getKey(), values);
+            }
+        }
+
+        private void processIndexProperty(Map<String, Map<Integer, String>> map, String key, String value) {
+            int left = key.indexOf("[");
+            int right = key.indexOf("]");
+            if (left <= 0 || right < left) { // k.e.y --> DO NOTHING
+                return;
+            }
+            if (right + 1 != key.length()) { // k.e[i].y 形式暂时不处理
+                return;
+            }
+            int index;
+            try {
+                index = Integer.parseInt(key.substring(left + 1, right));
+            } catch (NumberFormatException nfe) {
+                log.log(Level.CONFIG, "config key[{0}] not index key as invalid number", key);
+                return;
+            }
+            String keyPrefix = key.substring(0, left);
+            String old = map.computeIfAbsent(keyPrefix, k -> new HashMap<>()).put(index, value);
+            if (old != null) {
+                throw new IllegalArgumentException("duplicate index on key: " + key);
+            }
+//            Map<Integer, Object> kv = map.computeIfAbsent(keyPrefix, k -> new HashMap<>());
+//            if (right + 1 >= key.length()) { // k.e.y[i] --> k.e.y=[,,]; k.e[i].y[j] --> k.e=[{y:[]}]
+//                kv.put(index, value);
+//            } else {
+//                String shortKey = key.substring(right + 1); // key[i].k1, key[i].another[j].k
+//                Map<String, Map<Integer, Object>> v = (Map<String, Map<Integer, Object>>) kv.computeIfAbsent(index, k -> new HashMap<String, Map<Integer, Object>>());
+//                processIndexProperty(v, shortKey, value);
+//            }
+        }
+
+
 
         @Override
         public Set<String> getPropertyNames() {
